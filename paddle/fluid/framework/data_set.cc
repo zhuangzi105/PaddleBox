@@ -39,7 +39,9 @@
 USE_INT_STAT(STAT_total_feasign_num_in_mem);
 DECLARE_bool(graph_get_neighbor_id);
 DECLARE_bool(padbox_dataset_enable_unrollinstance);
-
+PADDLE_DEFINE_EXPORTED_bool(padbox_disable_ins_shuffle,
+                            false,
+                            "paddle disable ins shuffle ,default false");
 namespace paddle {
 namespace framework {
 
@@ -2779,8 +2781,10 @@ void PadBoxSlotDataset::PrepareTrain(void) {
   // join or aucrunner mode enable pv
   if (enable_pv_merge_ && (box_ptr->Phase() & 0x01 == 1 ||
                            box_ptr->Mode() == 1)) {
-    std::shuffle(input_pv_ins_.begin(), input_pv_ins_.end(),
+    if (!FLAGS_padbox_disable_ins_shuffle) {
+      std::shuffle(input_pv_ins_.begin(), input_pv_ins_.end(),
                  BoxWrapper::LocalRandomEngine());
+    }
     // 分数据到各线程里面
     int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
                         ->GetPvBatchSize();
@@ -2796,8 +2800,10 @@ void PadBoxSlotDataset::PrepareTrain(void) {
           ->AddBatchOffset(offset[i]);
     }
   } else {
-    std::shuffle(input_records_.begin(), input_records_.end(),
+    if (!FLAGS_padbox_disable_ins_shuffle) {
+      std::shuffle(input_records_.begin(), input_records_.end(),
                  BoxWrapper::LocalRandomEngine());
+    }
     // 分数据到各线程里面
     int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
                         ->GetBatchSize();

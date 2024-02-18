@@ -32,6 +32,8 @@ limitations under the License. */
 #endif
 #include "paddle/fluid/framework/data_type_transform.h"
 #include "paddle/fluid/framework/program_utils.h"
+#include <sys/stat.h>
+#include <fcntl.h>
 
 DECLARE_bool(enable_dump_main_program);
 DECLARE_bool(enable_sync_dense_moment);
@@ -52,6 +54,8 @@ PADDLE_DEFINE_EXPORTED_bool(
     padbox_enable_sharding_stage,
     true,
     "enable sharding stage step1 only param and grad split, default false");
+PADDLE_DEFINE_EXPORTED_string(
+    padbox_dump_debug_lineid, "", "config dump debug lineid, default is empty");
 namespace paddle {
 namespace framework {
 BoxPSAsynDenseTable::BoxPSAsynDenseTable(const int device_num)
@@ -396,7 +400,22 @@ void BoxPSWorker::Initialize(const TrainerDesc& desc) {
   if (device_num_ == 0) {
     device_num_ = desc.thread_num();
   }
+  dump_fields_path_ = desc.dump_fields_path();
+  dump_thread_num_ = desc.boxps_param().dump_thread_num();
+  if (need_dump_field_ || need_dump_param_) {
+    if (dump_thread_num_ <= 1) {
+      dump_thread_num_ = 20;
+    }
+    fds_sizes_.resize(dump_thread_num_);
+    for (int i = 0; i  < dump_thread_num_; ++i) {
+      fds_sizes_[i] = {-1, 0, 0};
+    }
+    dump_thread_pool_.reset(new paddle::framework::ThreadPool(dump_thread_num_));
+    VLOG(0) << "device id=" << device_id_ << ", dump fields path: " << dump_fields_path_ 
+            << ", dump thread num: " << dump_thread_num_;
+  } 
   VLOG(1) << "boxps_worker init device num: " << device_num_;
+
 }
 void BoxPSWorker::Finalize() {
   if (sharding_mode_ || device_id_ == 0) {
@@ -1432,7 +1451,7 @@ void BoxPSWorker::TrainFilesWithProfiler() {
   }
   if (need_dump_field_ || need_dump_param_) {
     dump_timer.Resume();
-    writer_.Flush();
+    FlushDump();
     dump_timer.Pause();
   }
 
@@ -1488,7 +1507,8 @@ inline void PrintLodTensorFmtType(const Tensor* tensor,
 
   size_t oldlen = str->length();
   // resize string
-  str->resize(oldlen + num * max_fmt_buff_size);
+  size_t new_len = oldlen + num * max_fmt_buff_size;
+  str->resize(new_len);
 
   const C* ptr = reinterpret_cast<const C*>(tensor->data<T>());
   for (int64_t i = start; i < end; ++i) {
@@ -1498,6 +1518,7 @@ inline void PrintLodTensorFmtType(const Tensor* tensor,
   }
   // resize real string
   str->resize(oldlen);
+  PADDLE_ENFORCE(new_len >= oldlen, "new len %lu must be larger than oldlen %lu", new_len, oldlen);
 }
 inline void PrintLodTensor(const Tensor* tensor,
                            const int64_t& start,
@@ -1518,17 +1539,92 @@ inline void PrintLodTensor(const Tensor* tensor,
     out->append("unsupported type");
   }
 }
-inline void GetTensorBound(const LoDTensor& tensor,
+inline bool GetTensorBound(const LoDTensor& tensor,
                            int index,
                            std::pair<int64_t, int64_t>* bound) {
+  if (!tensor.IsInitialized()) {
+    return false;
+  }
   auto& dims = tensor.dims();
-  if (tensor.lod().size() != 0) {
+  if (dims.size() == 0 || dims[0] <= 0) {
+    return false;
+  }
+
+  int64_t dim_len = 1;
+  if (tensor.lod().size() != 0 && dims.size() == 2) {
     auto& lod = tensor.lod()[0];
+    if (lod.size() <= static_cast<size_t>(index + 1)) {
+      return false;
+    }
     bound->first = lod[index] * dims[1];
     bound->second = lod[index + 1] * dims[1];
   } else {
-    bound->first = index * dims[1];
-    bound->second = (index + 1) * dims[1];
+    if (dims[0] <= static_cast<int64_t>(index)) {
+      return false;
+    }
+    for (int i = 1; i < dims.size(); ++i) {
+      dim_len *= dims[i];
+    }
+    bound->first = index * dim_len;
+    bound->second = (index + 1) * dim_len;
+  }
+  return (dim_len > 0);
+}
+bool CheckValidTensor(const LoDTensor* tensor, size_t batch_size) {
+  auto& dims = tensor->dims();
+  if (dims.size() == 0) {
+    return false;
+  }
+  if (tensor->lod().size() != 0) {
+    auto& lod = tensor->lod()[0];
+    if (lod.size() != batch_size + 1) {
+      return false;
+    }
+  } else {
+    if (dims[0] != static_cast<int>(batch_size)) {
+      return false;
+    }
+  }
+  return true;
+}
+static const size_t MAX_FILE_LEN = 1UL << 31;
+static const size_t MAX_BUFF_LEN = 4 * 1024 * 1024;
+void BoxPSWorker::OpenDump(const int &tid) {
+  fd_info_t &fd_info = fds_sizes_[tid];
+  if (fd_info.fd >= 0 && fd_info.len < MAX_FILE_LEN) {
+    // already opened, just return
+    return;
+  }
+  // close file and open new one
+  if (fd_info.fd >= 0) {
+    ::close(fd_info.fd);
+  }
+  std::string filename = string::format_string(
+    "%s/part-%02d-%05d-%05d", dump_fields_path_.c_str(), device_id_, tid, fd_info.fileid);
+  ++fd_info.fileid;
+  
+  int fd = ::open(filename.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_APPEND, 0777);
+  PADDLE_ENFORCE(fd >= 0, "open %s failed", filename.c_str());
+  fd_info.len = 0;
+  fd_info.fd = fd;
+}
+void BoxPSWorker::WriteDump(const int &tid, const std::string& buf) {
+  fd_info_t &fd_info = fds_sizes_[tid];
+  int ret = ::write(fd_info.fd, buf.c_str(), buf.size());
+  fd_info.len += ret;
+}
+void BoxPSWorker::FlushDump(void) {
+  for (auto &fd_info : fds_sizes_) {
+    if (fd_info.fd < 0) {
+      continue;
+    }
+    if (fd_info.len > 0) {
+      ::fsync(fd_info.fd);
+    }
+    ::close(fd_info.fd);
+    fd_info.fd = -1;
+    fd_info.len = 0;
+    fd_info.fileid = 0;
   }
 }
 void BoxPSWorker::DumpParam(const Scope& scope, const int batch_id) {
@@ -1540,17 +1636,19 @@ void BoxPSWorker::DumpParam(const Scope& scope, const int batch_id) {
   std::vector<framework::LoDTensor> cpu_tensors(field_num);
   for (size_t i = 0; i < field_num; ++i) {
     auto& name = (*dump_param_)[i];
+    auto& cpu_tensor = cpu_tensors[i];
     Variable* var = scope.FindVar(name);
     if (var == nullptr || !var->IsInitialized()) {
+      cpu_tensor.clear();
       continue;
     }
     const LoDTensor& tensor = var->Get<LoDTensor>();
     if (!tensor.IsInitialized()) {
-      VLOG(0) << "Note: param[" << name
+      VLOG(1) << "Note: param[" << name
               << "] is not initialized, so it was skipped.";
+      cpu_tensor.clear();
       continue;
     }
-    auto& cpu_tensor = cpu_tensors[i];
     TensorCopy(tensor, platform::CUDAPinnedPlace(), &cpu_tensor);
   }
   dev_ctx_->Wait();
@@ -1559,17 +1657,26 @@ void BoxPSWorker::DumpParam(const Scope& scope, const int batch_id) {
   double copy_time = timeline.ElapsedSec();
 
   timeline.Resume();
-  parallel_run_dynamic(
-      field_num, [this, &scope, batch_id, &cpu_tensors](const size_t& i) {
-        auto& cpu_tensor = cpu_tensors[i];
-        int64_t len = cpu_tensor.numel();
-        auto& name = (*dump_param_)[i];
-        std::string s;
-        format_string_append(&s, "(%d,%s,%ld)", batch_id, name.c_str(), len);
-        PrintLodTensor(&cpu_tensor, 0, len, &s);
-        // write to channel
-        writer_.channel()->Put(std::move(s));
-      });
+  parallel_run_range(
+      field_num, [this, &scope, batch_id, &cpu_tensors](
+        const int &tid, const size_t& start, const size_t &end) {
+        thread_local std::string s;
+        for (size_t i = start; i < end; ++i) {
+          auto& cpu_tensor = cpu_tensors[i];
+          if (!cpu_tensor.IsInitialized()) {
+            continue;
+          }
+          OpenDump(tid);
+          int64_t len = cpu_tensor.numel();
+          auto& name = (*dump_param_)[i];
+          format_string_append(&s, "(%d,%s,%ld)", batch_id, name.c_str(), len);
+          PrintLodTensor(&cpu_tensor, 0, len, &s);
+          s.append("\n");
+          // write to channel
+          WriteDump(tid, s);
+          s.clear();
+        }
+      }, dump_thread_pool_.get());
   timeline.Pause();
 
   if (FLAGS_enable_print_dump_info_debug) {
@@ -1593,38 +1700,46 @@ void BoxPSWorker::DumpField(const Scope& scope,
   for (size_t i = 0; i < field_num; ++i) {
     auto& field = (*dump_fields_)[i];
     Variable* var = scope.FindVar(field);
+    auto &cpu_tensor = cpu_tensors[i];
     if (var == nullptr || !var->IsInitialized()) {
       VLOG(3) << "Note: field[" << field
               << "] cannot be find in scope, so it was skipped.";
+      cpu_tensor.clear();
       continue;
     }
     const LoDTensor& tensor = var->Get<LoDTensor>();
     if (!tensor.IsInitialized()) {
       VLOG(3) << "Note: field[" << field
               << "] is not initialized, so it was skipped.";
+      cpu_tensor.clear();
       continue;
     }
-    if (!CheckValidOutput(&tensor, batch_size)) {
+    if (!CheckValidTensor(&tensor, batch_size)) {
+      cpu_tensor.clear();
       auto& dims = tensor.dims();
-      VLOG(0) << "Note: field[" << field
+      VLOG(1) << "Note: field[" << field
               << "] cannot pass check, "
-                 "so it was skipped. Maybe the dimension is wrong["
-              << dims.size() << "!=" << dims[0] << " * " << dims[1] << "]";
+                 "so it was skipped. Maybe the dimension is wrong batch size=" 
+              << batch_size << ", dims: [" << dims << "]";
       continue;
     }
-    TensorCopy(tensor, platform::CUDAPinnedPlace(), &cpu_tensors[i]);
+    TensorCopy(tensor, platform::CUDAPinnedPlace(), &cpu_tensor);
   }
   dev_ctx_->Wait();
   // wait stream
   timeline.Pause();
 
+  if (FLAGS_enable_print_dump_field_debug) {
+    VLOG(0) << "device id=" << device_id_ << ", field_num=" << field_num 
+            << ", batch_size=" << batch_size;
+  }
   double copy_time = timeline.ElapsedSec();
 
   timeline.Resume();
   std::atomic<size_t> line_cnt{0};
   std::atomic<size_t> num_cnt{0};
   // dump data
-  parallel_run_dynamic(
+  parallel_run_range(
       batch_size,
       [this,
        &cpu_tensors,
@@ -1632,72 +1747,94 @@ void BoxPSWorker::DumpField(const Scope& scope,
        dump_mode,
        dump_interval,
        &line_cnt,
-       &num_cnt](const size_t& i) {
-        const std::string& lineid = device_reader_->GetLineId(i);
+       &num_cnt](const int &tid, const size_t& start, const size_t &end) {
+        if (FLAGS_enable_print_dump_field_debug) {
+          VLOG(0) << "[" << device_id_ << "] begin tid=" << tid <<", field_num=" << field_num;
+        }
 
         thread_local std::default_random_engine engine(0);
         thread_local std::uniform_int_distribution<size_t> dist(0U, INT_MAX);
-        size_t r = 0;
-        if (dump_mode == 1) {
-          r = XXH64(lineid.data(), lineid.length(), 0);
-        } else if (dump_mode == 2) {
-          r = dist(engine);
-        }
-        if (r % dump_interval != 0) {
-          return;
-        }
-        ++line_cnt;
-
-        std::string s;
+        thread_local std::pair<int64_t, int64_t> bound;
+        thread_local std::string s;
         s.reserve(1024);
+        size_t r = 0;
         size_t pos = 0;
-        if (FLAGS_lineid_have_extend_info) {
-          pos = lineid.find(" ");
-          if (pos != std::string::npos) {
-            s.append(&lineid[0], pos);
+        size_t num = 0;
+
+        for (size_t i = start; i < end; ++i) {
+          const std::string& lineid = device_reader_->GetLineId(i);
+          if (dump_mode == 1) {
+            r = XXH64(lineid.data(), lineid.length(), 0);
+          } else if (dump_mode == 2) {
+            r = dist(engine);
+          }
+          if (r % dump_interval != 0) {
+            continue;
+          }
+          if (!FLAGS_padbox_dump_debug_lineid.empty() && 
+            strncmp(lineid.c_str(), FLAGS_padbox_dump_debug_lineid.c_str(), 32) != 0) {
+            continue;
+          }
+          ++line_cnt;
+          OpenDump(tid);    
+          if (FLAGS_lineid_have_extend_info) {
+            pos = lineid.find(" ");
+            if (pos != std::string::npos) {
+              s.append(&lineid[0], pos);
+            } else {
+              s.append(lineid);
+            }
           } else {
             s.append(lineid);
           }
-        } else {
-          s.append(lineid);
-        }
-
-        thread_local std::pair<int64_t, int64_t> bound;
-        size_t num = 0;
-        for (size_t k = 0; k < field_num; ++k) {
-          s.append("\t", 1);
-          auto& tensor = cpu_tensors[k];
-          GetTensorBound(tensor, i, &bound);
-          num += (bound.second - bound.first);
-
-          auto& field = (*dump_fields_)[k];
-          if (FLAGS_dump_filed_same_as_aibox) {
-            size_t ext_pos = field.find(".");
-            if (ext_pos != std::string::npos) {
-              s.append(&field[0], ext_pos);
-            } else {
-              s.append(field);
+          for (size_t k = 0; k < field_num; ++k) {
+            auto& tensor = cpu_tensors[k];
+            auto& field = (*dump_fields_)[k];
+            if (!GetTensorBound(tensor, i, &bound)) {
+              continue;
             }
-          } else {
-            format_string_append(
-                &s, "%s:%ld", field.c_str(), bound.second - bound.first);
+            s.append("\t", 1);
+            num += (bound.second - bound.first);
+            if (FLAGS_dump_filed_same_as_aibox) {
+              size_t ext_pos = field.find(".");
+              if (ext_pos != std::string::npos) {
+                s.append(&field[0], ext_pos);
+              } else {
+                s.append(field);
+              }
+            } else {
+              format_string_append(
+                  &s, "%s:%ld", field.c_str(), bound.second - bound.first);
+            }
+            if (FLAGS_enable_print_dump_field_debug) {
+              VLOG(0) << "[" << device_id_ << "]tid=" << tid << ", lineid:[" << lineid 
+                      << "], name=" << field << ", dims: [" << tensor.dims() << "], len=" << s.length()
+                      << ", bound=[" << bound.first << "," << bound.second << "]";
+            }
+            PrintLodTensor(&tensor, bound.first, bound.second, &s);
+            if (s.length() > MAX_BUFF_LEN) {
+              WriteDump(tid, s);
+              s.clear();
+            }
           }
-          PrintLodTensor(&tensor, bound.first, bound.second, &s);
+
+          // append extends tag info
+          if (pos > 0) {
+            s.append("\t", 1);
+            s.append(&lineid[pos + 1], lineid.length() - pos - 1);
+          }
+          s.append("\n");
+          // write to channel
+          WriteDump(tid, s);
+          s.clear();
+          // debug info
+          if (FLAGS_enable_print_dump_field_debug) {
+            VLOG(0) << "[" << device_id_ << "] tid=" << tid
+                    << ", lineid:[" << lineid << "], field_num=" << field_num;
+          }
         }
         num_cnt += num;
-
-        // append extends tag info
-        if (pos > 0) {
-          s.append("\t", 1);
-          s.append(&lineid[pos + 1], lineid.length() - pos - 1);
-        }
-        if (FLAGS_enable_print_dump_field_debug) {
-          VLOG(0) << "lineid:[" << lineid << "], " << field_num << ", value:["
-                  << s << "]";
-        }
-        // write to channel
-        writer_.channel()->Put(std::move(s));
-      });
+      }, dump_thread_pool_.get());
   timeline.Pause();
   // add dump warning
   if (line_cnt > 0 && num_cnt == 0) {
