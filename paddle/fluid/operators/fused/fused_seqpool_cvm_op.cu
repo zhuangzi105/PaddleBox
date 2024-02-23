@@ -339,15 +339,14 @@ __global__ void FusedCVMKernelWithShowConcate(const size_t N,
     int x = key / batch_size;  // slot id
     int y = key % batch_size;  // ins id
     const T *in =
-        &seqpool_output_values[key * embedding_size * embedx_concate_size];
-
+        &seqpool_output_values[key * embedding_size * embedx_concate_size +
+                               k * embedding_size];
+    T *out = (output_values[x] + y * concat_embedding_size +
+              k * noclk_embedding_size + offset);
     if (offset == 0) {  // show
-      *(output_values[x] + y * concat_embedding_size +
-        k * noclk_embedding_size) = log(in[k * embedding_size] + 1);
+      *out = log(in[0] + 1);
     } else {  // skip click offset + 1
-      *(output_values[x] + y * concat_embedding_size +
-        k * noclk_embedding_size + offset) =
-          in[k * embedding_size + offset + 1];
+      *out = in[offset + 1];
     }
   }
 }
@@ -394,11 +393,12 @@ __global__ void FusedCVMKernelNoCVMEmbedxConcate(
     int x = key / batch_size;  // slot id
     int y = key % batch_size;  // ins id
     const T *in =
-        &seqpool_output_values[key * embedding_size * embedx_concate_size];
+        &seqpool_output_values[key * embedding_size * embedx_concate_size +
+                               k * embedding_size];
 
     // no cvm
     *(output_values[x] + y * concat_embedding_size + k * no_cvm_embedding_size +
-      offset) = in[k * embedding_size + offset + cvm_offset];
+      offset) = in[offset + cvm_offset];
   }
 }
 
