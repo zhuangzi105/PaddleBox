@@ -47,7 +47,7 @@ __global__ void FusedSeqpoolKernelNormal(const size_t N,
 
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start; k < end; ++k) {
       val += *(input_values[x] + k * embedding_size + offset);
     }
@@ -74,7 +74,7 @@ __global__ void FusedSeqpoolKernelQuant(const size_t N,
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
 
-    T val = pad_value;
+    double val = pad_value;
     // quant
     for (auto k = start; k < end; ++k) {
       if (offset < cvm_offset) {  // show click
@@ -114,10 +114,11 @@ __global__ void FusedSeqpoolKernelQuantFilter(const size_t N,
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
 
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start; k < end; ++k) {
-      T &show = *(input_values[x] + k * embedding_size);
-      T &click = *(input_values[x] + k * embedding_size + 1);
+      T *in = (input_values[x] + k * embedding_size);
+      T &show = in[0];
+      T &click = in[1];
       if (!xbox_diff_thres_filter) {
         // normal threshold filter
         if ((show - click) * show_coeff + click * clk_coeff < threshold) {
@@ -133,12 +134,9 @@ __global__ void FusedSeqpoolKernelQuantFilter(const size_t N,
       //   continue;
       // }
       if (offset < cvm_offset) {  // show & click
-        val += *(input_values[x] + k * embedding_size + offset);
+        val += in[offset];
       } else {
-        val += ((static_cast<int>(
-                    *(input_values[x] + k * embedding_size + offset) *
-                        quant_ratio +
-                    0.5)) /
+        val += ((static_cast<int>(in[offset] * quant_ratio + 0.5)) /
                 static_cast<float>(quant_ratio));
       }
     }

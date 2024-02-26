@@ -47,7 +47,7 @@ __global__ void FusedSeqpoolWithConvKernelNormal(const size_t N,
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
 
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start; k < end; ++k) {
       val += *(input_values[x] + k * embedding_size + offset);
     }
@@ -75,14 +75,15 @@ __global__ void FusedSeqpoolWithConvKernelFilter(const size_t N,
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
 
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start; k < end; ++k) {
-      T &show = *(input_values[x] + k * embedding_size);
-      T &click = *(input_values[x] + k * embedding_size + 1);
+      T *in = (input_values[x] + k * embedding_size);
+      T &show = in[0];
+      T &click = in[1];
       if ((show - click) * show_coeff + click * clk_coeff < threshold) {
         continue;
       }
-      val += *(input_values[x] + k * embedding_size + offset);
+      val += in[offset];
     }
     seqpool_output_values[i] = val;
   }
@@ -114,7 +115,7 @@ __global__ void FusedSeqpoolWithConvKernelNormalEmbedxConcate(
     if (concat_end_pos > end) {
       concat_end_pos = end;
     }
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start + concate_index; k < concat_end_pos; ++k) {
       val += *(input_values[x] + k * embedding_size + offset);
     }

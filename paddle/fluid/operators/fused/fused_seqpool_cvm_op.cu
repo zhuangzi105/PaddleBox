@@ -47,7 +47,7 @@ __global__ void FusedSeqpoolKernelNormal(const size_t N,
 
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start; k < end; ++k) {
       val += *(input_values[x] + k * embedding_size + offset);
     }
@@ -74,7 +74,7 @@ __global__ void FusedSeqpoolKernelQuant(const size_t N,
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
 
-    T val = pad_value;
+    double val = pad_value;
     // quant
     for (auto k = start; k < end; ++k) {
       if (offset < cvm_offset) {  // show click
@@ -112,7 +112,7 @@ __global__ void FusedSeqpoolKernelQuantFilter(const size_t N,
     auto &start = lods_values[x * (batch_size + 1) + y];
     auto &end = lods_values[x * (batch_size + 1) + y + 1];
 
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start; k < end; ++k) {
       T *in = (input_values[x] + k * embedding_size);
       T &show = in[0];
@@ -199,7 +199,7 @@ __global__ void FusedSeqpoolKernelEmbedQuantFilter(
     auto &slot_offset = gpu_slot_fea_offsets[x];
     const int *keep_flags = &gpu_slot_fea_flag[slot_offset];
 
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start; k < end; ++k) {
       if (keep_flags[k] == 0) {
         continue;
@@ -252,7 +252,7 @@ __global__ void FusedSeqpoolKernelEmbedQuantFilterEmbedxConcate(
     auto &slot_offset = gpu_slot_fea_offsets[x];
     const int *keep_flags = &gpu_slot_fea_flag[slot_offset];
 
-    T val = pad_value;
+    double val = pad_value;
     for (auto k = start + concate_index; k < concat_end_pos; ++k) {
       if (embedx_concate_filter && keep_flags[k] == 0) {  // need filter
         continue;
