@@ -1173,6 +1173,9 @@ void BoxPSWorker::CreateDeviceResource(const ProgramDesc& main_prog) {
         }
         str_os << "]";
       }
+      if (sync_points_.find(op.get()) != sync_points_.end()) {
+        str_os << ", sync point";
+      }
       str_os << "\n";
     }
     auto box_ptr = BoxWrapper::GetInstance();
@@ -1297,18 +1300,34 @@ void BoxPSWorker::TrainFiles() {
     if (dense_table_) {
       dense_table_->PullDense(place_, &param_async_.tensor());
     }
-    for (auto& op : ops_) {
-      if (FLAGS_padbox_enable_print_op_debug) {
-        VLOG(0) << "thread id=" << thread_id_ << ", "
-                << op->DebugStringEx(thread_scope_);
-      }
-      // add stream sync
-      if (sync_points_.find(op.get()) != sync_points_.end()) {
+    if (accum_num == 0) {
+      // first batch stream sync, fix nccl sharding mode c_broadcast blocking
+      dev_ctx_->Wait();
+      for (auto& op : ops_) {
+        if (FLAGS_padbox_enable_print_op_debug) {
+          VLOG(0) << "thread id=" << thread_id_ << ", "
+                  << op->DebugStringEx(thread_scope_);
+        }
+        op->Run(*thread_scope_, place_);
         dev_ctx_->Wait();
+        if (gc) {
+          DeleteUnusedTensors(*thread_scope_, op.get(), unused_vars_, gc.get());
+        }
       }
-      op->Run(*thread_scope_, place_);
-      if (gc) {
-        DeleteUnusedTensors(*thread_scope_, op.get(), unused_vars_, gc.get());
+    } else {
+      for (auto& op : ops_) {
+        if (FLAGS_padbox_enable_print_op_debug) {
+          VLOG(0) << "thread id=" << thread_id_ << ", "
+                  << op->DebugStringEx(thread_scope_);
+        }
+        // add stream sync
+        if (sync_points_.find(op.get()) != sync_points_.end()) {
+          dev_ctx_->Wait();
+        }
+        op->Run(*thread_scope_, place_);
+        if (gc) {
+          DeleteUnusedTensors(*thread_scope_, op.get(), unused_vars_, gc.get());
+        }
       }
     }
     if (dense_table_) {
