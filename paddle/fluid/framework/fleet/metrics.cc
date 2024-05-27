@@ -323,7 +323,7 @@ void BasicAucCalculator::compute() {
   } else {
     _auc = area / (fp * tp);
   }
-
+  double total_ins_num = _local_total_num;
   if (node_size > 1) {
 #ifdef PADDLE_WITH_BOX_PS
     // allreduce sum
@@ -343,6 +343,7 @@ void BasicAucCalculator::compute() {
     _mae = local_err[0] / (fp + tp);
     _rmse = sqrt(local_err[1] / (fp + tp));
     _predicted_ctr = local_err[2] / (fp + tp);
+    total_ins_num = local_err[4];
   } else {
     _mae = _local_abserr / (fp + tp);
     _rmse = sqrt(_local_sqrerr / (fp + tp));
@@ -353,7 +354,8 @@ void BasicAucCalculator::compute() {
 
   // add debug info print
   if (FLAGS_enable_debug_print_metrics_info) {
-    LOG(WARNING) << "total ins num: " << _local_total_num 
+    LOG(WARNING) << "total ins num: " << total_ins_num 
+                 << ", local ins num: " << _local_total_num 
                  << ", fp: " << fp
                  << ", tp: " << tp
                  << ", label: " << _local_label
@@ -362,7 +364,7 @@ void BasicAucCalculator::compute() {
                  << ", sqr: " << _local_sqrerr;
   }
 
-  PADDLE_ENFORCE_EQ(_local_total_num,
+  PADDLE_ENFORCE_EQ(total_ins_num,
                     _size,
                     platform::errors::InvalidArgument(
                       "The table ins num not equal real total num."));
