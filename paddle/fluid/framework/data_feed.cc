@@ -3089,6 +3089,8 @@ void SlotPaddleBoxDataFeed::Init(const DataFeedDesc& data_feed_desc) {
   input_type_ = data_feed_desc.input_type();
 
   rank_offset_name_ = data_feed_desc.rank_offset();
+  ads_offset_name_ = data_feed_desc.ads_offset();
+  ads_timestamp_name_ = data_feed_desc.ads_timestamp();
   pv_batch_size_ = data_feed_desc.pv_batch_size();
 
   // fprintf(stdout, "rank_offset_name: [%s]\n", rank_offset_name_.c_str());
@@ -3210,17 +3212,27 @@ void SlotPaddleBoxDataFeed::AssignFeedVar(const Scope& scope) {
         scope.FindVar(used_slots_info_[i].slot)->GetMutable<LoDTensor>();
   }
   // set rank offset memory
-  if (enable_pv_merge_) {
+  if (enable_pv_merge_ && merge_by_uid_){
+    ads_offset_ = scope.FindVar(ads_offset_name_)->GetMutable<LoDTensor>();
+    ads_timestamp_ = scope.FindVar(ads_timestamp_name_)->GetMutable<LoDTensor>();
+  } else if (enable_pv_merge_) {
     rank_offset_ = scope.FindVar(rank_offset_name_)->GetMutable<LoDTensor>();
   }
 }
 void SlotPaddleBoxDataFeed::PutToFeedPvVec(const SlotPvInstance* pvs, int num) {
 #if defined(PADDLE_WITH_CUDA) && defined(_LINUX)
   paddle::platform::SetDeviceId(place_.GetDeviceId());
+  pack_->set_merge_by_uid(merge_by_uid_);
   pack_->pack_pvinstance(pvs, num);
   int ins_num = pack_->ins_num();
   int pv_num = pack_->pv_num();
-  GetRankOffsetGPU(pv_num, ins_num);
+  VLOG(1) << "thread id " << thread_id_ << ", pv_nums:" << pv_num << ", ins_num:" << ins_num;
+  if (merge_by_uid_){
+    GetAdsOffsetGPU(pv_num, ins_num);
+    GetTimestampGPU(pv_num, ins_num);
+  } else {
+    GetRankOffsetGPU(pv_num, ins_num);
+  }
   BuildSlotBatchGPU(ins_num);
 #else
   int ins_number = 0;
@@ -3538,6 +3550,30 @@ void SlotPaddleBoxDataFeed::GetRankOffsetGPU(const int pv_num,
                  value.d_ad_offset.data<int>(), col);
 #endif
 }
+
+// todo: copy
+void SlotPaddleBoxDataFeed::GetTimestampGPU(const int pv_num, const int ins_num) {
+    auto stream = dynamic_cast<phi::GPUContext*>(
+          platform::DeviceContextPool::Instance().Get(this->place_))
+          ->stream();
+    auto& buf = pack_->cpu_value();
+    int64_t* tensor_ptr = ads_timestamp_->mutable_data<int64_t>(phi::make_ddim({ins_num, 1}), this->place_);
+    CUDA_CHECK(cudaMemcpyAsync(tensor_ptr, reinterpret_cast<int64_t*>(buf.h_timestamp.data()), buf.h_timestamp.size() * sizeof(int64_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    VLOG(1) << "this thread id is " << thread_id_ << ", this place is " << this->place_ << ", ads_timestamp_ is " << *ads_timestamp_;
+}
+
+void SlotPaddleBoxDataFeed::GetAdsOffsetGPU(const int pv_num, const int ins_num) {
+    auto stream = dynamic_cast<phi::GPUContext*>(
+          platform::DeviceContextPool::Instance().Get(this->place_))
+          ->stream();
+    auto& buf = pack_->cpu_value();
+    int* tensor_ptr = ads_offset_->mutable_data<int>(phi::make_ddim({pv_num + 1, 1}), this->place_);
+    CUDA_CHECK(cudaMemcpyAsync(tensor_ptr, buf.h_ad_offset.data(), buf.h_ad_offset.size() * sizeof(int), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    VLOG(1) << "this thread id is " << thread_id_ << ", this place is" << this->place_ << ", ads_offset_ is " << *ads_offset_;
+}
+
 void SlotPaddleBoxDataFeed::GetRankOffset(const SlotPvInstance* pv_vec,
                                           int pv_num, int ins_number) {
   int index = 0;
@@ -4680,6 +4716,9 @@ void MiniBatchGpuPack::reset(const paddle::platform::Place& place) {
   qvalue_tensor_ = &BoxWrapper::GetInstance()->GetQTensor(device_id);
 #endif
 }
+void MiniBatchGpuPack::set_merge_by_uid(bool merge_by_uid) {
+    enable_pv_by_uid_ = merge_by_uid;
+}
 
 void MiniBatchGpuPack::pack_pvinstance(const SlotPvInstance* pv_ins, int num) {
   pv_num_ = num;
@@ -4688,11 +4727,15 @@ void MiniBatchGpuPack::pack_pvinstance(const SlotPvInstance* pv_ins, int num) {
   size_t ins_number = 0;
 
   ins_vec_.clear();
+  buf_.h_timestamp.clear();
   for (int i = 0; i < num; ++i) {
     auto& pv = pv_ins[i];
     ins_number += pv->ads.size();
     for (auto ins : pv->ads) {
       ins_vec_.push_back(ins);
+      if (enable_pv_by_uid_){
+        buf_.h_timestamp.push_back(ins->cur_timestamp_);
+      }
     }
     buf_.h_ad_offset[i + 1] = ins_number;
   }

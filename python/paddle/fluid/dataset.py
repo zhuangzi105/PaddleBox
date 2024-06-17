@@ -129,6 +129,18 @@ class DatasetBase(object):
 
         """
         self.proto_desc.rank_offset = rank_offset
+    
+    def set_ads_offset(self, ads_offset):
+        """
+        set ads_offset
+        """
+        self.proto_desc.ads_offset = ads_offset
+    
+    def set_ads_timestamp(self, ads_timestamp):
+        """
+        set ads_timestamp
+        """
+        self.proto_desc.ads_timestamp = ads_timestamp
 
     def set_fea_eval(self, record_candidate_size, fea_eval=True):
         """
@@ -400,6 +412,7 @@ class InMemoryDataset(DatasetBase):
         self.parse_content = False
         self.parse_logkey = False
         self.merge_by_sid = True
+        self.merge_by_uid = False
         self.enable_pv_merge = False
         self.merge_by_lineid = False
         self.fleet_send_sleep_seconds = None
@@ -432,6 +445,7 @@ class InMemoryDataset(DatasetBase):
         self.dataset.set_parse_content(self.parse_content)
         self.dataset.set_parse_logkey(self.parse_logkey)
         self.dataset.set_merge_by_sid(self.merge_by_sid)
+        self.dataset.set_merge_by_uid(self.merge_by_uid)
         self.dataset.set_enable_pv_merge(self.enable_pv_merge)
         self.dataset.set_data_feed_desc(self.desc())
         self.dataset.create_channel()
@@ -574,6 +588,24 @@ class InMemoryDataset(DatasetBase):
 
         """
         self.merge_by_sid = merge_by_sid
+
+
+    def set_merge_by_uid(self, merge_by_uid):
+        """
+        Set if Dataset need to merge sid. If not, one ins means one Pv.
+
+        Args:
+            merge_by_sid(bool): if merge sid or not
+
+        Examples:
+            .. code-block:: python
+
+              import paddle.fluid as fluid
+              dataset = fluid.DatasetFactory().create_dataset("InMemoryDataset")
+              dataset.set_merge_by_sid(True)
+
+        """
+        self.merge_by_uid = merge_by_uid
 
     def set_enable_pv_merge(self, enable_pv_merge):
         """
@@ -1386,6 +1418,7 @@ class PadBoxSlotDataset(BoxPSDataset):
         self.parse_content = False
         self.parse_logkey = False
         self.merge_by_sid = True
+        self.merge_by_uid = False
         self.enable_pv_merge = False
         self.merge_by_lineid = False
         self.fleet_send_sleep_seconds = None

@@ -38,10 +38,14 @@
 
 USE_INT_STAT(STAT_total_feasign_num_in_mem);
 DECLARE_bool(graph_get_neighbor_id);
+DECLARE_bool(dump_pv_ins);
 DECLARE_bool(padbox_dataset_enable_unrollinstance);
 PADDLE_DEFINE_EXPORTED_bool(padbox_disable_ins_shuffle,
                             false,
                             "paddle disable ins shuffle ,default false");
+PADDLE_DEFINE_EXPORTED_bool(dump_pv_ins,
+                            false,
+                            "dump pv instance ,default false");
 namespace paddle {
 namespace framework {
 
@@ -177,6 +181,11 @@ void DatasetImpl<T>::SetMergeByInsId(int merge_size) {
 template <typename T>
 void DatasetImpl<T>::SetMergeBySid(bool is_merge) {
   merge_by_sid_ = is_merge;
+}
+
+template <typename T>
+void DatasetImpl<T>::SetMergeByUid(bool is_merge) {
+  merge_by_uid_ = is_merge;
 }
 
 template <typename T>
@@ -2660,10 +2669,22 @@ void PadBoxSlotDataset::PreprocessInstance() {
   }
 
   size_t all_records_num = input_records_.size();
-  std::sort(input_records_.data(), input_records_.data() + all_records_num,
+  if (merge_by_uid_){
+    std::sort(input_records_.begin(), input_records_.end(),
+            [](const SlotRecord& lhs, const SlotRecord& rhs) {
+                return lhs->user_id_sign_ < rhs->user_id_sign_ || 
+                       lhs->user_id_sign_ == rhs->user_id_sign_ && lhs->user_id_ < rhs->user_id_ ||
+                       lhs->user_id_sign_ == rhs->user_id_sign_ && lhs->user_id_ == rhs->user_id_ && lhs->cur_timestamp_ < rhs->cur_timestamp_;
+            }
+    );
+    merge_by_sid_ = false;
+  }
+  else {
+    std::sort(input_records_.data(), input_records_.data() + all_records_num,
             [](const SlotRecord& lhs, const SlotRecord& rhs) {
               return lhs->search_id < rhs->search_id;
             });
+  }
   if (merge_by_sid_) {
     uint64_t last_search_id = 0;
     for (size_t i = 0; i < all_records_num; ++i) {
@@ -2677,6 +2698,19 @@ void PadBoxSlotDataset::PreprocessInstance() {
       }
       input_pv_ins_.back()->merge_instance(ins);
     }
+  } else if(merge_by_uid_){
+    std::string last_user_id = "";
+    for (size_t i = 0; i < all_records_num; ++i) {
+      auto& ins = input_records_[i];
+      if (i == 0 || last_user_id != ins->user_id_) {
+        SlotPvInstance pv_instance = make_slotpv_instance();
+        pv_instance->merge_instance(ins);
+        input_pv_ins_.push_back(pv_instance);
+        last_user_id = ins->user_id_;
+        continue;
+      }
+      input_pv_ins_.back()->merge_instance(ins);
+    }
   } else {
     for (size_t i = 0; i < all_records_num; ++i) {
       auto& ins = input_records_[i];
@@ -2685,6 +2719,19 @@ void PadBoxSlotDataset::PreprocessInstance() {
       input_pv_ins_.push_back(pv_instance);
     }
   }
+  if(FLAGS_dump_pv_ins){
+    static int index = 0;
+    std::string file_name = "pv_ins_" + std::to_string(index++) + ".txt";
+    std::ofstream ofs(file_name);
+    for(auto pv : input_pv_ins_){
+        for(auto ins : pv->ads){
+            ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":" << ins->cur_timestamp_ << " ";
+        }
+        ofs << "\n";
+    }
+    ofs.close();
+  }
+
 }
 // restore
 void PadBoxSlotDataset::PostprocessInstance() {}
@@ -2780,7 +2827,8 @@ void PadBoxSlotDataset::PrepareTrain(void) {
   std::vector<std::pair<int, int>> offset;
   // join or aucrunner mode enable pv
   if (enable_pv_merge_ && (box_ptr->Phase() & 0x01 == 1 ||
-                           box_ptr->Mode() == 1)) {
+                           box_ptr->Mode() == 1 ||
+                           merge_by_uid_)) {
     if (!FLAGS_padbox_disable_ins_shuffle) {
       std::shuffle(input_pv_ins_.begin(), input_pv_ins_.end(),
                  BoxWrapper::LocalRandomEngine());
@@ -2793,6 +2841,7 @@ void PadBoxSlotDataset::PrepareTrain(void) {
       SlotPaddleBoxDataFeed* feed =
           reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[i].get());
       feed->SetEnablePvMerge(enable_pv_merge_);
+      feed->SetMergeByUid(merge_by_uid_);
       feed->SetPvInstance(&input_pv_ins_[0]);
     }
     for (size_t i = 0; i < offset.size(); ++i) {

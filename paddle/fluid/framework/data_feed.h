@@ -206,6 +206,10 @@ struct SlotRecordObject {
   std::string ins_id_;
   SlotValues<uint64_t> slot_uint64_feasigns_;
   SlotValues<float> slot_float_feasigns_;
+  std::string user_id_;
+  uint64_t user_id_sign_;
+  uint64_t cur_timestamp_;
+
 
   ~SlotRecordObject() { clear(true); }
   void reset(void) { clear(FLAGS_enable_slotrecord_reset_shrink); }
@@ -500,6 +504,7 @@ struct BatchCPUValue {
   std::vector<int> h_rank;
   std::vector<int> h_cmatch;
   std::vector<int> h_ad_offset;
+  std::vector<uint64_t> h_timestamp;
 };
 
 struct BatchGPUValue {
@@ -514,6 +519,7 @@ struct BatchGPUValue {
   Tensor d_rank;
   Tensor d_cmatch;
   Tensor d_ad_offset;
+  Tensor d_timestamp;
 };
 
 class MiniBatchGpuPack {
@@ -521,6 +527,7 @@ class MiniBatchGpuPack {
   MiniBatchGpuPack(const paddle::platform::Place& place,
                    const std::vector<UsedSlotInfo>& infos);
   ~MiniBatchGpuPack();
+  void set_merge_by_uid(bool merge_by_uid);
   void reset(const paddle::platform::Place& place);
   void pack_pvinstance(const SlotPvInstance* pv_ins, int num);
   void pack_instance(const SlotRecord* ins_vec, int num);
@@ -606,6 +613,7 @@ class MiniBatchGpuPack {
   int pv_num_ = 0;
 
   bool enable_pv_ = false;
+  bool enable_pv_by_uid_ = false;
   int used_float_num_ = 0;
   int used_uint64_num_ = 0;
   int used_slot_size_ = 0;
@@ -1118,6 +1126,8 @@ class DataFeed {
   std::vector<LoDTensor*> feed_vec_;
 
   LoDTensor* rank_offset_;
+  LoDTensor* ads_offset_;
+  LoDTensor* ads_timestamp_;
 
   // the batch size defined by user
   int default_batch_size_;
@@ -2072,6 +2082,9 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   virtual void SetEnablePvMerge(bool enable_pv_merge) {
     enable_pv_merge_ = enable_pv_merge;
   }
+  virtual void SetMergeByUid(bool merge_by_uid) {
+    merge_by_uid_ = merge_by_uid;
+  }
   virtual void SetCurrentPhase(int current_phase) {
     current_phase_ = current_phase;
   }
@@ -2122,6 +2135,8 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   void PutToFeedSlotVec(const SlotRecord* recs, int num);
   void BuildSlotBatchGPU(const int ins_num);
   void GetRankOffsetGPU(const int pv_num, const int ins_num);
+  void GetTimestampGPU(const int pv_num, const int ins_num);
+  void GetAdsOffsetGPU(const int pv_num, const int ins_num);
   void GetRankOffset(const SlotPvInstance* pv_vec, int pv_num, int ins_number);
   bool ParseOneInstance(const std::string& line, SlotRecord* rec);
 
@@ -2167,6 +2182,7 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   bool parse_content_ = false;
   bool parse_logkey_ = false;
   bool enable_pv_merge_ = false;
+  bool merge_by_uid_ = false;
   int current_phase_{-1};  // only for untest
   std::shared_ptr<FILE> fp_ = nullptr;
   ChannelObject<SlotRecord>* input_channel_ = nullptr;
@@ -2178,6 +2194,8 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   size_t float_total_dims_size_ = 0;
 
   std::string rank_offset_name_;
+  std::string ads_offset_name_;
+  std::string ads_timestamp_name_;
   int pv_batch_size_ = 0;
   int use_slot_size_ = 0;
   int float_use_slot_size_ = 0;
