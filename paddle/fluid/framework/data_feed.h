@@ -2315,7 +2315,10 @@ paddle::framework::Archive<AR>& operator<<(paddle::framework::Archive<AR>& ar,
   ar << r->search_id;
   ar << r->rank;
   ar << r->cmatch;
-
+  ar << r->user_id_;
+  ar << r->user_id_sign_;
+  ar << r->cur_timestamp_;
+  
   return ar;
 }
 template <class AR>
@@ -2327,6 +2330,9 @@ paddle::framework::Archive<AR>& operator>>(paddle::framework::Archive<AR>& ar,
   ar >> r->search_id;
   ar >> r->rank;
   ar >> r->cmatch;
+  ar >> r->user_id_;
+  ar >> r->user_id_sign_;
+  ar >> r->cur_timestamp_;
 
   return ar;
 }

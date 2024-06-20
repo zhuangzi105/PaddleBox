@@ -2431,6 +2431,9 @@ class ShuffleResultWaitGroup : public boxps::ResultCallback {
 std::function<uint64_t(const SlotRecord&)>
 PadBoxSlotDataset::general_shuffle_func(void) {
   if (enable_pv_merge_ || FLAGS_enable_shuffle_by_searchid) {  // shuffle by pv
+    if(merge_by_uid_){
+        return [this](const SlotRecord& t) { return t->user_id_sign_; };
+    }
     return [this](const SlotRecord& t) { return t->search_id; };
   }
   if (merge_by_insid_) {  // shuffle by lineid
