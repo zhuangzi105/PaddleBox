@@ -3704,7 +3704,8 @@ void SlotPaddleBoxDataFeed::LoadIntoMemoryByLine(void) {
   paddle::framework::ISlotParser* parser =
       global_parser_pool().Get(parser_so_path_, all_slots_info_);
   CHECK(parser != nullptr);
-
+  parser->SetTestMode(is_test_);
+  parser->SetTestTimestampRange(test_timestamp_range_);
   boxps::PaddleDataReader* reader = nullptr;
   if (BoxWrapper::GetInstance()->UseAfsApi() && pipe_command_.empty()) {
     reader =

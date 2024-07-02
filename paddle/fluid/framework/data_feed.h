@@ -1044,6 +1044,8 @@ class DataFeed {
   virtual void SetParseLogKey(bool parse_logkey) {}
   virtual void SetEnablePvMerge(bool enable_pv_merge) {}
   virtual void SetCurrentPhase(int current_phase) {}
+  virtual void SetTestMode(bool is_test) {}
+  virtual void SetTestTimestampRange(std::pair<uint64_t, uint64_t> range) {}
   virtual void SetDeviceKeys(std::vector<uint64_t>* device_keys, int type) {
 #if defined(PADDLE_WITH_GPU_GRAPH) && defined(PADDLE_WITH_HETERPS)
     gpu_graph_data_generator_.SetDeviceKeys(device_keys, type);
@@ -2021,6 +2023,16 @@ class ISlotParser {
       int& lines) {         // NOLINT
     return false;
   }
+  void SetTestMode(bool test_mode) {
+    is_test_ = test_mode;
+  }
+  void SetTestTimestampRange(std::pair<uint64_t, uint64_t> test_timestamp_range){
+    test_timestamp_range_ = test_timestamp_range;
+  }
+  
+protected:
+  bool is_test_ = false;
+  std::pair<uint64_t, uint64_t> test_timestamp_range_;
 };
 
 /**
@@ -2084,6 +2096,12 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   }
   virtual void SetMergeByUid(bool merge_by_uid) {
     merge_by_uid_ = merge_by_uid;
+  }
+  void SetTestMode(bool is_test) {
+    is_test_ = is_test;
+  }
+  void SetTestTimestampRange(std::pair<uint64_t, uint64_t> range) {
+    test_timestamp_range_ = range;
   }
   virtual void SetCurrentPhase(int current_phase) {
     current_phase_ = current_phase;
@@ -2183,6 +2201,8 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   bool parse_logkey_ = false;
   bool enable_pv_merge_ = false;
   bool merge_by_uid_ = false;
+  bool is_test_ = false;
+  std::pair<uint64_t, uint64_t> test_timestamp_range_;
   int current_phase_{-1};  // only for untest
   std::shared_ptr<FILE> fp_ = nullptr;
   ChannelObject<SlotRecord>* input_channel_ = nullptr;

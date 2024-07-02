@@ -317,6 +317,12 @@ void BindDataset(py::module *m) {
       .def("set_merge_by_uid",
            &framework::Dataset::SetMergeByUid,
            py::call_guard<py::gil_scoped_release>())
+      .def("set_test_mode",
+           &framework::Dataset::SetTestMode,
+           py::call_guard<py::gil_scoped_release>())
+      .def("set_test_timestamp_range",
+           &framework::Dataset::SetTestTimestampRange,
+           py::call_guard<py::gil_scoped_release>())
       .def("set_shuffle_by_uid",
            &framework::Dataset::SetShuffleByUid,
            py::call_guard<py::gil_scoped_release>())

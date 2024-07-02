@@ -194,6 +194,16 @@ void DatasetImpl<T>::SetMergeByUid(bool is_merge, int merge_by_uid_split_method,
 }
 
 template <typename T>
+void DatasetImpl<T>::SetTestMode(bool is_test) {
+  is_test_ = is_test;
+}
+
+template <typename T>
+void DatasetImpl<T>::SetTestTimestampRange(std::pair<uint64_t, uint64_t> range) {
+  test_timestamp_range_ = range;
+}
+
+template <typename T>
 void DatasetImpl<T>::SetShuffleByUid(bool enable_shuffle_uid) {
   shuffle_by_uid_ = enable_shuffle_uid;
   parse_uid_ = true;
@@ -2643,6 +2653,8 @@ void PadBoxSlotDataset::CreateReaders() {
     readers_[i]->SetParseContent(parse_content_);
     readers_[i]->SetParseLogKey(parse_logkey_);
     readers_[i]->SetEnablePvMerge(enable_pv_merge_);
+    readers_[i]->SetTestMode(is_test_);
+    readers_[i]->SetTestTimestampRange(test_timestamp_range_);
     // Notice: it is only valid for untest of test_paddlebox_datafeed.
     // In fact, it does not affect the train process when paddle is
     // complied with Box_Ps.
@@ -2739,15 +2751,47 @@ void PadBoxSlotDataset::PreprocessInstance() {
       input_pv_ins_.push_back(pv_instance);
     }
   }
+  // erase non-test instance(nothing in range)
+  if(merge_by_uid_ && is_test_){
+    if(FLAGS_dump_pv_ins){
+      static int index_before = 0;
+      std::string file_name = "before_filter_pv_ins_" + std::to_string(index_before++) + ".txt";
+      std::ofstream ofs(file_name);
+      for(auto pv : input_pv_ins_){
+        for(auto ins : pv->ads){
+          ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":" << ins->cur_timestamp_ << " ";
+        }
+          ofs << "\n";
+    }
+      ofs.close();
+  }
+  VLOG(0) << "test timestamp range: [" << test_timestamp_range_.first << ", " << test_timestamp_range_.second << ")";
+  size_t all_pv_ins_size = input_pv_ins_.size();
+    
+  for(auto& pv : input_pv_ins_){
+    if(pv->ads.back()->cur_timestamp_ < test_timestamp_range_.first){
+      delete pv;
+      pv = NULL;
+    }
+  }
+
+  input_pv_ins_.erase(std::remove_if(input_pv_ins_.begin(), input_pv_ins_.end(), [this](SlotPvInstance pv){
+          return pv == NULL;
+        }), input_pv_ins_.end());
+  size_t range_pv_ins_size = input_pv_ins_.size();
+  VLOG(0) << "before filter pv_ins size: " << all_pv_ins_size
+          << ", after filter pv_ins size: " << range_pv_ins_size;
+  }
+
   if(FLAGS_dump_pv_ins){
     static int index = 0;
     std::string file_name = "pv_ins_" + std::to_string(index++) + ".txt";
     std::ofstream ofs(file_name);
     for(auto pv : input_pv_ins_){
-        for(auto ins : pv->ads){
-            ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":" << ins->cur_timestamp_ << " ";
-        }
-        ofs << "\n";
+      for(auto ins : pv->ads){
+        ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":" << ins->cur_timestamp_ << " ";
+      }
+      ofs << "\n";
     }
     ofs.close();
   }

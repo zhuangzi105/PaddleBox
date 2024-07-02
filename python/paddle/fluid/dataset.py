@@ -447,6 +447,8 @@ class InMemoryDataset(DatasetBase):
         self.dataset.set_parse_logkey(self.parse_logkey)
         self.dataset.set_merge_by_sid(self.merge_by_sid)
         self.dataset.set_merge_by_uid(self.merge_by_uid, self.merge_by_uid_split_method, self.merge_by_uid_split_size)
+        self.dataset.set_test_mode(self.test_mode)
+        self.dataset.set_test_timestamp_range(self.test_timestamp_range)
         self.dataset.set_enable_pv_merge(self.enable_pv_merge)
         self.dataset.set_data_feed_desc(self.desc())
         self.dataset.create_channel()
@@ -611,6 +613,16 @@ class InMemoryDataset(DatasetBase):
         self.merge_by_uid = merge_by_uid
         self.merge_by_uid_split_method = merge_by_uid_split_method
         self.merge_by_uid_split_size = merge_by_uid_split_size
+    def set_test_mode(self, test_mode):
+        """
+        set test_mode
+        """
+        self.test_mode = test_mode
+    def set_test_timestamp_range(self, test_timestamp_range):
+        """
+        set test_timestamp_range
+        """
+        self.test_timestamp_range = test_timestamp_range
 
     def set_enable_pv_merge(self, enable_pv_merge):
         """
@@ -1424,6 +1436,8 @@ class PadBoxSlotDataset(BoxPSDataset):
         self.parse_logkey = False
         self.merge_by_sid = True
         self.merge_by_uid = False
+        self.test_mode = False
+        self.test_timestamp_range = (0, 0)
         self.enable_pv_merge = False
         self.merge_by_lineid = False
         self.fleet_send_sleep_seconds = None
