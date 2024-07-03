@@ -413,6 +413,7 @@ class InMemoryDataset(DatasetBase):
         self.parse_logkey = False
         self.merge_by_sid = True
         self.merge_by_uid = False
+        self.merge_by_uid_split_size = 0
         self.enable_pv_merge = False
         self.merge_by_lineid = False
         self.fleet_send_sleep_seconds = None
@@ -445,7 +446,7 @@ class InMemoryDataset(DatasetBase):
         self.dataset.set_parse_content(self.parse_content)
         self.dataset.set_parse_logkey(self.parse_logkey)
         self.dataset.set_merge_by_sid(self.merge_by_sid)
-        self.dataset.set_merge_by_uid(self.merge_by_uid)
+        self.dataset.set_merge_by_uid(self.merge_by_uid, self.merge_by_uid_split_method, self.merge_by_uid_split_size)
         self.dataset.set_enable_pv_merge(self.enable_pv_merge)
         self.dataset.set_data_feed_desc(self.desc())
         self.dataset.create_channel()
@@ -589,23 +590,27 @@ class InMemoryDataset(DatasetBase):
         """
         self.merge_by_sid = merge_by_sid
 
-
-    def set_merge_by_uid(self, merge_by_uid):
+    def set_merge_by_uid(self, merge_by_uid, merge_by_uid_split_method, merge_by_uid_split_size):
         """
-        Set if Dataset need to merge sid. If not, one ins means one Pv.
+        Set if Dataset need to merge uid. If not, one ins means one Pv.
 
         Args:
-            merge_by_sid(bool): if merge sid or not
+            merge_by_uid(bool): if merge uid or not
+            merge_by_uid_split_method(int): if merge_by_uid is True, it means the split method of uid.
+                0 no split, 1 direct split, 2 mask split
+            merge_by_uid_split_size(int): if merge_by_uid is True, it means the split size of uid.
 
         Examples:
             .. code-block:: python
 
               import paddle.fluid as fluid
               dataset = fluid.DatasetFactory().create_dataset("InMemoryDataset")
-              dataset.set_merge_by_sid(True)
+              dataset.set_merge_by_uid(True, 1024)
 
         """
         self.merge_by_uid = merge_by_uid
+        self.merge_by_uid_split_method = merge_by_uid_split_method
+        self.merge_by_uid_split_size = merge_by_uid_split_size
 
     def set_enable_pv_merge(self, enable_pv_merge):
         """

@@ -94,7 +94,7 @@ class Dataset {
   virtual void SetEnablePvMerge(bool enable_pv_merge) = 0;
   virtual bool EnablePvMerge() = 0;
   virtual void SetMergeBySid(bool is_merge) = 0;
-  virtual void SetMergeByUid(bool is_merge) = 0;
+  virtual void SetMergeByUid(bool is_merge, int merge_by_uid_split_method, size_t merge_by_uid_split_size) = 0;
   virtual void SetShuffleByUid(bool enable_shuffle_uid) = 0;
   // set merge by ins id
   virtual void SetMergeByInsId(int merge_size) = 0;
@@ -218,7 +218,7 @@ class DatasetImpl : public Dataset {
   virtual void SetParseLogKey(bool parse_logkey);
   virtual void SetEnablePvMerge(bool enable_pv_merge);
   virtual void SetMergeBySid(bool is_merge);
-  virtual void SetMergeByUid(bool is_merge);
+  virtual void SetMergeByUid(bool is_merge, int merge_by_uid_split_method, size_t merge_by_uid_split_size);
   virtual void SetShuffleByUid(bool enable_shuffle_uid);
 
   virtual void SetMergeByInsId(int merge_size);
@@ -353,6 +353,8 @@ class DatasetImpl : public Dataset {
   bool parse_logkey_;
   bool merge_by_sid_;
   bool merge_by_uid_ = false;
+  int merge_by_uid_split_method_ = 0; // 0 no split, 1 direct split, 2 mask split
+  size_t merge_by_uid_split_size_ = 0;
   bool shuffle_by_uid_;
   bool parse_uid_;
   bool enable_pv_merge_;  // True means to merge pv

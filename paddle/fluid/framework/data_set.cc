@@ -184,8 +184,13 @@ void DatasetImpl<T>::SetMergeBySid(bool is_merge) {
 }
 
 template <typename T>
-void DatasetImpl<T>::SetMergeByUid(bool is_merge) {
+void DatasetImpl<T>::SetMergeByUid(bool is_merge, int merge_by_uid_split_method, size_t merge_by_uid_split_size) {
   merge_by_uid_ = is_merge;
+  merge_by_uid_split_method_ = merge_by_uid_split_method;
+  merge_by_uid_split_size_ = merge_by_uid_split_size;
+  if (merge_by_uid_split_method_ > 0) {
+    CHECK(merge_by_uid_split_size_ > 0);
+  }
 }
 
 template <typename T>
@@ -2701,18 +2706,30 @@ void PadBoxSlotDataset::PreprocessInstance() {
       }
       input_pv_ins_.back()->merge_instance(ins);
     }
-  } else if(merge_by_uid_){
-    std::string last_user_id = "";
-    for (size_t i = 0; i < all_records_num; ++i) {
-      auto& ins = input_records_[i];
-      if (i == 0 || last_user_id != ins->user_id_) {
-        SlotPvInstance pv_instance = make_slotpv_instance();
-        pv_instance->merge_instance(ins);
-        input_pv_ins_.push_back(pv_instance);
-        last_user_id = ins->user_id_;
-        continue;
+  } else if(merge_by_uid_) {
+    size_t i = 0;
+    size_t ins_count = 0;
+    for (i = 0; i < all_records_num; i += ins_count) {
+      std::string now_user_id = input_records_[i]->user_id_;
+      for (ins_count = 1; 
+          i + ins_count < all_records_num && now_user_id == input_records_[i + ins_count]->user_id_;
+          ++ins_count) {
       }
-      input_pv_ins_.back()->merge_instance(ins);
+      SlotPvInstance pv_instance = make_slotpv_instance();
+      input_pv_ins_.push_back(pv_instance);
+      if (merge_by_uid_split_method_ == 1 && merge_by_uid_split_size_ > 0) {
+        for (size_t j = 0; j < ins_count; ++j) {
+          if (j > 0 && ((ins_count - j) % merge_by_uid_split_size_ == 0)) {
+            SlotPvInstance pv_instance = make_slotpv_instance();
+            input_pv_ins_.push_back(pv_instance);
+          }
+          input_pv_ins_.back()->merge_instance(input_records_[i + j]);
+        }
+      } else {
+        for (size_t j = 0; j < ins_count; ++j) {
+          input_pv_ins_.back()->merge_instance(input_records_[i + j]);
+        }
+      }
     }
   } else {
     for (size_t i = 0; i < all_records_num; ++i) {
