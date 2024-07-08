@@ -142,6 +142,12 @@ class DatasetBase(object):
         """
         self.proto_desc.ads_timestamp = ads_timestamp
 
+    def set_ads_train_mask(self, ads_train_mask):
+        """
+        set ads_offset
+        """
+        self.proto_desc.ads_train_mask = ads_train_mask
+
     def set_fea_eval(self, record_candidate_size, fea_eval=True):
         """
         set fea eval mode for slots shuffle to debug the importance level of
@@ -414,6 +420,7 @@ class InMemoryDataset(DatasetBase):
         self.merge_by_sid = True
         self.merge_by_uid = False
         self.merge_by_uid_split_size = 0
+        self.merge_by_uid_split_train_size = 0
         self.enable_pv_merge = False
         self.merge_by_lineid = False
         self.fleet_send_sleep_seconds = None
@@ -446,7 +453,9 @@ class InMemoryDataset(DatasetBase):
         self.dataset.set_parse_content(self.parse_content)
         self.dataset.set_parse_logkey(self.parse_logkey)
         self.dataset.set_merge_by_sid(self.merge_by_sid)
-        self.dataset.set_merge_by_uid(self.merge_by_uid, self.merge_by_uid_split_method, self.merge_by_uid_split_size)
+        self.dataset.set_merge_by_uid(
+            self.merge_by_uid, self.merge_by_uid_split_method,
+            self.merge_by_uid_split_size, self.merge_by_uid_split_train_size)
         self.dataset.set_test_mode(self.test_mode)
         self.dataset.set_test_timestamp_range(self.test_timestamp_range)
         self.dataset.set_enable_pv_merge(self.enable_pv_merge)
@@ -592,7 +601,9 @@ class InMemoryDataset(DatasetBase):
         """
         self.merge_by_sid = merge_by_sid
 
-    def set_merge_by_uid(self, merge_by_uid, merge_by_uid_split_method, merge_by_uid_split_size):
+    def set_merge_by_uid(self, merge_by_uid, merge_by_uid_split_method,
+                         merge_by_uid_split_size,
+                         merge_by_uid_split_train_size):
         """
         Set if Dataset need to merge uid. If not, one ins means one Pv.
 
@@ -601,23 +612,29 @@ class InMemoryDataset(DatasetBase):
             merge_by_uid_split_method(int): if merge_by_uid is True, it means the split method of uid.
                 0 no split, 1 direct split, 2 mask split
             merge_by_uid_split_size(int): if merge_by_uid is True, it means the split size of uid.
+            merge_by_uid_split_train_size(int): if merge_by_uid is True, it means the split size of uid in train. only used in mask split.
 
         Examples:
             .. code-block:: python
 
               import paddle.fluid as fluid
               dataset = fluid.DatasetFactory().create_dataset("InMemoryDataset")
-              dataset.set_merge_by_uid(True, 1024)
+              dataset.set_merge_by_uid(True, 1, 1024, 512)
 
         """
         self.merge_by_uid = merge_by_uid
         self.merge_by_uid_split_method = merge_by_uid_split_method
         self.merge_by_uid_split_size = merge_by_uid_split_size
+        self.merge_by_uid_split_train_size = merge_by_uid_split_train_size
+        if merge_by_uid_split_train_size == 0:  # deafult 1/2 of the seq
+            self.merge_by_uid_split_train_size = int(merge_by_uid_split_size / 2)
+
     def set_test_mode(self, test_mode):
         """
         set test_mode
         """
         self.test_mode = test_mode
+
     def set_test_timestamp_range(self, test_timestamp_range):
         """
         set test_timestamp_range

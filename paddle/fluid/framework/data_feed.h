@@ -505,6 +505,7 @@ struct BatchCPUValue {
   std::vector<int> h_cmatch;
   std::vector<int> h_ad_offset;
   std::vector<uint64_t> h_timestamp;
+  std::vector<uint64_t> h_train_mask;
 };
 
 struct BatchGPUValue {
@@ -528,8 +529,11 @@ class MiniBatchGpuPack {
                    const std::vector<UsedSlotInfo>& infos);
   ~MiniBatchGpuPack();
   void set_merge_by_uid(bool merge_by_uid);
+  void set_merge_by_uid_split_method(int split_method);
   void reset(const paddle::platform::Place& place);
-  void pack_pvinstance(const SlotPvInstance* pv_ins, int num);
+  void pack_pvinstance(const SlotPvInstance* pv_ins,
+                       int num,
+                       const int* zero_mask_num);
   void pack_instance(const SlotRecord* ins_vec, int num);
   int ins_num() { return ins_num_; }
   int pv_num() { return pv_num_; }
@@ -614,6 +618,7 @@ class MiniBatchGpuPack {
 
   bool enable_pv_ = false;
   bool enable_pv_by_uid_ = false;
+  int merge_by_uid_split_method_ = 0; // 0 no split, 1 direct split, 2 mask split
   int used_float_num_ = 0;
   int used_uint64_num_ = 0;
   int used_slot_size_ = 0;
@@ -1130,6 +1135,7 @@ class DataFeed {
   LoDTensor* rank_offset_;
   LoDTensor* ads_offset_;
   LoDTensor* ads_timestamp_;
+  LoDTensor* ads_train_mask_;
 
   // the batch size defined by user
   int default_batch_size_;
@@ -2097,6 +2103,9 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   virtual void SetMergeByUid(bool merge_by_uid) {
     merge_by_uid_ = merge_by_uid;
   }
+  virtual void SetSeqSplitMethod(int merge_by_uid_split_method) {
+    merge_by_uid_split_method_ = merge_by_uid_split_method;
+  }
   void SetTestMode(bool is_test) {
     is_test_ = is_test;
   }
@@ -2125,6 +2134,7 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   int GetBatchSize() { return default_batch_size_; }
   int GetPvBatchSize() { return pv_batch_size_; }
   void SetPvInstance(SlotPvInstance* pv_ins) { pv_ins_ = pv_ins; }
+  void SetZeroMaskNums(int* zero_mask_num) { zero_mask_num_ = zero_mask_num; }
   void SetSlotRecord(SlotRecord* records) { records_ = records; }
   void AddBatchOffset(const std::pair<int, int>& off) {
     batch_offsets_.push_back(off);
@@ -2149,12 +2159,15 @@ class SlotPaddleBoxDataFeed : public DataFeed {
  protected:
   virtual void LoadIntoMemoryByCommand(void);
   virtual void LoadIntoMemoryByLib(void);
-  void PutToFeedPvVec(const SlotPvInstance* pvs, int num);
+  void PutToFeedPvVec(const SlotPvInstance* pvs,
+                      int num,
+                      const int* zero_mask_num);
   void PutToFeedSlotVec(const SlotRecord* recs, int num);
   void BuildSlotBatchGPU(const int ins_num);
   void GetRankOffsetGPU(const int pv_num, const int ins_num);
   void GetTimestampGPU(const int pv_num, const int ins_num);
   void GetAdsOffsetGPU(const int pv_num, const int ins_num);
+  void GetTrainMaskGPU(const int pv_num, const int ins_num);
   void GetRankOffset(const SlotPvInstance* pv_vec, int pv_num, int ins_number);
   bool ParseOneInstance(const std::string& line, SlotRecord* rec);
 
@@ -2201,6 +2214,7 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   bool parse_logkey_ = false;
   bool enable_pv_merge_ = false;
   bool merge_by_uid_ = false;
+  int merge_by_uid_split_method_ = 0;
   bool is_test_ = false;
   std::pair<uint64_t, uint64_t> test_timestamp_range_;
   int current_phase_{-1};  // only for untest
@@ -2216,6 +2230,7 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   std::string rank_offset_name_;
   std::string ads_offset_name_;
   std::string ads_timestamp_name_;
+  std::string ads_train_mask_name_;
   int pv_batch_size_ = 0;
   int use_slot_size_ = 0;
   int float_use_slot_size_ = 0;
@@ -2231,6 +2246,7 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   int offset_index_ = 0;
   std::vector<std::pair<int, int>> batch_offsets_;
   SlotPvInstance* pv_ins_ = nullptr;
+  int* zero_mask_num_ = nullptr;
   SlotRecord* records_ = nullptr;
   std::vector<AllSlotInfo> all_slots_info_;
   std::vector<UsedSlotInfo> used_slots_info_;

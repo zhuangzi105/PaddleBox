@@ -94,7 +94,10 @@ class Dataset {
   virtual void SetEnablePvMerge(bool enable_pv_merge) = 0;
   virtual bool EnablePvMerge() = 0;
   virtual void SetMergeBySid(bool is_merge) = 0;
-  virtual void SetMergeByUid(bool is_merge, int merge_by_uid_split_method, size_t merge_by_uid_split_size) = 0;
+  virtual void SetMergeByUid(bool is_merge,
+                             int merge_by_uid_split_method,
+                             size_t merge_by_uid_split_size,
+                             size_t merge_by_uid_split_train_size) = 0;
   virtual void SetTestMode(bool is_merge) = 0;
   virtual void SetTestTimestampRange(std::pair<uint64_t, uint64_t> range) = 0;
   virtual void SetShuffleByUid(bool enable_shuffle_uid) = 0;
@@ -220,7 +223,10 @@ class DatasetImpl : public Dataset {
   virtual void SetParseLogKey(bool parse_logkey);
   virtual void SetEnablePvMerge(bool enable_pv_merge);
   virtual void SetMergeBySid(bool is_merge);
-  virtual void SetMergeByUid(bool is_merge, int merge_by_uid_split_method, size_t merge_by_uid_split_size);
+  virtual void SetMergeByUid(bool is_merge,
+                             int merge_by_uid_split_method,
+                             size_t merge_by_uid_split_size,
+                             size_t merge_by_uid_split_train_size);
   virtual void SetTestMode(bool is_merge);
   virtual void SetTestTimestampRange(std::pair<uint64_t, uint64_t> range);
   virtual void SetShuffleByUid(bool enable_shuffle_uid);
@@ -359,6 +365,7 @@ class DatasetImpl : public Dataset {
   bool merge_by_uid_ = false;
   int merge_by_uid_split_method_ = 0; // 0 no split, 1 direct split, 2 mask split
   size_t merge_by_uid_split_size_ = 0;
+  size_t merge_by_uid_split_train_size_ = 0;
   bool is_test_ = false;
   std::pair<uint64_t, uint64_t> test_timestamp_range_;
   bool shuffle_by_uid_;
@@ -544,6 +551,7 @@ class PadBoxSlotDataset : public DatasetImpl<SlotRecord> {
   int mpi_size_ = 1;
   int mpi_rank_ = 0;
   std::vector<SlotPvInstance> input_pv_ins_;
+  std::vector<int> zero_mask_num_;
   int shuffle_thread_num_ = FLAGS_padbox_dataset_shuffle_thread_num;
   std::atomic<int> shuffle_counter_{0};
   void* data_consumer_ = nullptr;

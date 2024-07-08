@@ -184,13 +184,24 @@ void DatasetImpl<T>::SetMergeBySid(bool is_merge) {
 }
 
 template <typename T>
-void DatasetImpl<T>::SetMergeByUid(bool is_merge, int merge_by_uid_split_method, size_t merge_by_uid_split_size) {
+void DatasetImpl<T>::SetMergeByUid(bool is_merge,
+                                   int merge_by_uid_split_method,
+                                   size_t merge_by_uid_split_size,
+                                   size_t merge_by_uid_split_train_size) {
   merge_by_uid_ = is_merge;
   merge_by_uid_split_method_ = merge_by_uid_split_method;
   merge_by_uid_split_size_ = merge_by_uid_split_size;
+  merge_by_uid_split_train_size_ = merge_by_uid_split_train_size == 0
+                                       ? merge_by_uid_split_size_ / 2
+                                       : merge_by_uid_split_train_size;
+
   if (merge_by_uid_split_method_ > 0) {
     CHECK(merge_by_uid_split_size_ > 0);
   }
+  VLOG(1) << "is_merge_by_uid:" << merge_by_uid_
+          << ", split method:" << merge_by_uid_split_method_
+          << ", split size:" << merge_by_uid_split_size_
+          << ", split train size:" << merge_by_uid_split_train_size_;
 }
 
 template <typename T>
@@ -199,7 +210,8 @@ void DatasetImpl<T>::SetTestMode(bool is_test) {
 }
 
 template <typename T>
-void DatasetImpl<T>::SetTestTimestampRange(std::pair<uint64_t, uint64_t> range) {
+void DatasetImpl<T>::SetTestTimestampRange(
+    std::pair<uint64_t, uint64_t> range) {
   test_timestamp_range_ = range;
 }
 
@@ -1358,43 +1370,43 @@ void MultiSlotDataset::GenerateLocalTablesUnlock(int table_id,
   }
   auto gen_func =
       [this, &shard_num, &feadim, &local_map_tables](int i) {
-        std::vector<Record> vec_data;
-        std::vector<std::vector<uint64_t>> task_keys(shard_num);
-        std::vector<std::future<void>> task_futures;
-        this->multi_output_channel_[i]->Close();
-        this->multi_output_channel_[i]->ReadAll(vec_data);
-        for (size_t j = 0; j < vec_data.size(); j++) {
-          for (auto& feature : vec_data[j].uint64_feasigns_) {
-            int shard = feature.sign().uint64_feasign_ % shard_num;
-            task_keys[shard].push_back(feature.sign().uint64_feasign_);
+    std::vector<Record> vec_data;
+    std::vector<std::vector<uint64_t>> task_keys(shard_num);
+    std::vector<std::future<void>> task_futures;
+    this->multi_output_channel_[i]->Close();
+    this->multi_output_channel_[i]->ReadAll(vec_data);
+    for (size_t j = 0; j < vec_data.size(); j++) {
+      for (auto& feature : vec_data[j].uint64_feasigns_) {
+        int shard = feature.sign().uint64_feasign_ % shard_num;
+        task_keys[shard].push_back(feature.sign().uint64_feasign_);
+      }
+    }
+
+    for (int shard_id = 0; shard_id < shard_num; shard_id++) {
+      task_futures.emplace_back(consume_task_pool_[shard_id]->Run([&]() {
+        for (auto k : task_keys[shard_id]) {
+          if (local_map_tables[shard_id].find(k) ==
+              local_map_tables[shard_id].end()) {
+            local_map_tables[shard_id][k] = std::vector<float>(feadim, 0);
           }
         }
+      }));
+    }
 
-        for (int shard_id = 0; shard_id < shard_num; shard_id++) {
-          task_futures.emplace_back(consume_task_pool_[shard_id]->Run([&]() {
-              for (auto k : task_keys[shard_id]) {
-                if (local_map_tables[shard_id].find(k) ==
-                        local_map_tables[shard_id].end()) {
-                   local_map_tables[shard_id][k] = std::vector<float>(feadim, 0);
-                }
-             }
-          }));
-        }
-
-        multi_output_channel_[i]->Open();
-        multi_output_channel_[i]->Write(std::move(vec_data));
-        vec_data.clear();
-        vec_data.shrink_to_fit();
-        for (auto& tk : task_keys) {
-          tk.clear();
-          std::vector<uint64_t>().swap(tk);
-        }
-        task_keys.clear();
-        std::vector<std::vector<uint64_t>>().swap(task_keys);
-        for (auto& tf : task_futures) {
-          tf.wait();
-        }
-      };
+    multi_output_channel_[i]->Open();
+    multi_output_channel_[i]->Write(std::move(vec_data));
+    vec_data.clear();
+    vec_data.shrink_to_fit();
+    for (auto& tk : task_keys) {
+      tk.clear();
+      std::vector<uint64_t>().swap(tk);
+    }
+    task_keys.clear();
+    std::vector<std::vector<uint64_t>>().swap(task_keys);
+    for (auto& tf : task_futures) {
+      tf.wait();
+    }
+  };
   for (size_t i = 0; i < threads.size(); i++) {
     threads[i] = std::thread(gen_func, i);
   }
@@ -2037,8 +2049,8 @@ void PadBoxSlotDataset::CheckThreadPool(void) {
   feed_obj->GetUsedSlotIndex(&used_fea_index_);
 
   VLOG(0) << "pass id=" << pass_id_ << ", shuffle disable: " << disable_shuffle_
-            << ", polling disable: " << disable_polling_
-            << ", slot num=" << used_fea_index_.size();
+          << ", polling disable: " << disable_polling_
+          << ", slot num=" << used_fea_index_.size();
 
   // read ins thread
   thread_pool_ = GetThreadPool(thread_num_);
@@ -2446,8 +2458,8 @@ class ShuffleResultWaitGroup : public boxps::ResultCallback {
 std::function<uint64_t(const SlotRecord&)>
 PadBoxSlotDataset::general_shuffle_func(void) {
   if (enable_pv_merge_ || FLAGS_enable_shuffle_by_searchid) {  // shuffle by pv
-    if(merge_by_uid_){
-        return [this](const SlotRecord& t) { return t->user_id_sign_; };
+    if (merge_by_uid_) {
+      return [this](const SlotRecord& t) { return t->user_id_sign_; };
     }
     return [this](const SlotRecord& t) { return t->search_id; };
   }
@@ -2572,7 +2584,8 @@ void PadBoxSlotDataset::ShuffleData(int thread_num) {
     }));
   }
 }
-void PadBoxSlotDataset::ReceiveSuffleData(int client_id, const char* buf,
+void PadBoxSlotDataset::ReceiveSuffleData(int client_id,
+                                          const char* buf,
                                           int len) {
   ++receiver_cnt_;
   VLOG(3) << "ReceiveFromClient client_id=" << client_id
@@ -2673,6 +2686,46 @@ void PadBoxSlotDataset::DestroyReaders() {
   readers_.shrink_to_fit();
 }
 
+static void compute_split_num_and_mask(const size_t ins_count,
+                                       const size_t seq_length,
+                                       const size_t train_length,
+                                       std::vector<std::pair<size_t, size_t>>& offset,
+                                       std::vector<int>& zero_mask) {
+  // [0, seq_length) contain one test-train windown
+  size_t window_num = (ins_count - seq_length) / train_length + 1;
+  // all ins train window
+  size_t all_train_window_start = 0;
+  size_t all_train_window_end = ins_count - (window_num * train_length);
+  offset.push_back({all_train_window_start, all_train_window_end});
+  zero_mask.push_back(0);
+  // infer-train window. infer ins : [0, seq_length - train_length) , train ins
+  // : [seq_length - train_length, seq_length)
+  size_t infer_train_window_start =
+      all_train_window_end - (seq_length - train_length);
+  size_t infer_train_window_end = all_train_window_end + train_length;
+  while (infer_train_window_end <= ins_count) {
+    offset.push_back({infer_train_window_start, infer_train_window_end});
+    infer_train_window_start += train_length;
+    infer_train_window_end += train_length;
+    zero_mask.push_back(seq_length - train_length);
+  }
+  PADDLE_ENFORCE_EQ(offset.size(),
+                    zero_mask.size(),
+                    platform::errors::InvalidArgument(
+                        "mask and offset size should be equal."));
+  size_t train_num = 0;
+  for (size_t i = 0; i < offset.size(); i++) {
+    train_num += (offset[i].second - offset[i].first) - zero_mask[i];
+  }
+  PADDLE_ENFORCE_EQ(
+      train_num,
+      ins_count,
+      platform::errors::InvalidArgument(
+          "the number of train instances must be same as total instances."));
+}
+
+// merge pv instance
+
 // merge pv instance
 void PadBoxSlotDataset::PreprocessInstance() {
   if (input_records_.empty()) {
@@ -2687,12 +2740,15 @@ void PadBoxSlotDataset::PreprocessInstance() {
     }
     input_pv_ins_.clear();
   }
+  if (!zero_mask_num_.empty()) {
+    zero_mask_num_.clear();
+  }
 
   size_t all_records_num = input_records_.size();
   if (merge_by_uid_){
     std::sort(input_records_.begin(), input_records_.end(),
-            [](const SlotRecord& lhs, const SlotRecord& rhs) {
-                return lhs->user_id_sign_ < rhs->user_id_sign_ || 
+              [](const SlotRecord& lhs, const SlotRecord& rhs) {
+                return lhs->user_id_sign_ < rhs->user_id_sign_ ||
                        lhs->user_id_sign_ == rhs->user_id_sign_ && lhs->user_id_ < rhs->user_id_ ||
                        lhs->user_id_sign_ == rhs->user_id_sign_ && lhs->user_id_ == rhs->user_id_ && lhs->cur_timestamp_ < rhs->cur_timestamp_;
             }
@@ -2701,10 +2757,11 @@ void PadBoxSlotDataset::PreprocessInstance() {
   }
   else {
     std::sort(input_records_.data(), input_records_.data() + all_records_num,
-            [](const SlotRecord& lhs, const SlotRecord& rhs) {
-              return lhs->search_id < rhs->search_id;
-            });
+              [](const SlotRecord& lhs, const SlotRecord& rhs) {
+                return lhs->search_id < rhs->search_id;
+              });
   }
+
   if (merge_by_sid_) {
     uint64_t last_search_id = 0;
     for (size_t i = 0; i < all_records_num; ++i) {
@@ -2718,18 +2775,19 @@ void PadBoxSlotDataset::PreprocessInstance() {
       }
       input_pv_ins_.back()->merge_instance(ins);
     }
-  } else if(merge_by_uid_) {
+  } else if (merge_by_uid_) {
     size_t i = 0;
     size_t ins_count = 0;
     for (i = 0; i < all_records_num; i += ins_count) {
       std::string now_user_id = input_records_[i]->user_id_;
-      for (ins_count = 1; 
-          i + ins_count < all_records_num && now_user_id == input_records_[i + ins_count]->user_id_;
-          ++ins_count) {
-      }
-      SlotPvInstance pv_instance = make_slotpv_instance();
-      input_pv_ins_.push_back(pv_instance);
+      for (ins_count = 1;
+           i + ins_count < all_records_num &&
+           now_user_id == input_records_[i + ins_count]->user_id_;
+           ++ins_count) {
+      }  // get ins count
       if (merge_by_uid_split_method_ == 1 && merge_by_uid_split_size_ > 0) {
+        SlotPvInstance pv_instance = make_slotpv_instance();
+        input_pv_ins_.push_back(pv_instance);
         for (size_t j = 0; j < ins_count; ++j) {
           if (j > 0 && ((ins_count - j) % merge_by_uid_split_size_ == 0)) {
             SlotPvInstance pv_instance = make_slotpv_instance();
@@ -2737,10 +2795,34 @@ void PadBoxSlotDataset::PreprocessInstance() {
           }
           input_pv_ins_.back()->merge_instance(input_records_[i + j]);
         }
+      } else if (merge_by_uid_split_method_ == 2 &&
+                 merge_by_uid_split_size_ > 0 &&
+                 merge_by_uid_split_size_ < ins_count) {
+        std::vector<std::pair<size_t, size_t>> offset;
+        std::vector<int> zero_mask;
+        compute_split_num_and_mask(ins_count,
+                                   merge_by_uid_split_size_,
+                                   merge_by_uid_split_train_size_,
+                                   offset,
+                                   zero_mask);
+        for (const auto& pair : offset) {
+          SlotPvInstance pv_instance = make_slotpv_instance();
+          input_pv_ins_.push_back(pv_instance);
+          for (size_t j = pair.first; j < pair.second; ++j) {
+            input_pv_ins_.back()->merge_instance(input_records_[i + j]);
+          }
+        }
+        zero_mask_num_.insert(
+            zero_mask_num_.end(), zero_mask.begin(), zero_mask.end());
+        VLOG(1) << "split the seq of " << now_user_id << " into "
+                << zero_mask.size() << " seqs.";
       } else {
+        SlotPvInstance pv_instance = make_slotpv_instance();
+        input_pv_ins_.push_back(pv_instance);
         for (size_t j = 0; j < ins_count; ++j) {
           input_pv_ins_.back()->merge_instance(input_records_[i + j]);
         }
+        zero_mask_num_.push_back(0);
       }
     }
   } else {
@@ -2751,58 +2833,69 @@ void PadBoxSlotDataset::PreprocessInstance() {
       input_pv_ins_.push_back(pv_instance);
     }
   }
+
   // erase non-test instance(nothing in range)
-  if(merge_by_uid_ && is_test_){
-    if(FLAGS_dump_pv_ins){
+  if (merge_by_uid_ && is_test_) {
+    if (FLAGS_dump_pv_ins) {
       static int index_before = 0;
-      std::string file_name = "before_filter_pv_ins_" + std::to_string(index_before++) + ".txt";
+      std::string file_name =
+          "before_filter_pv_ins_" + std::to_string(index_before++) + ".txt";
       std::ofstream ofs(file_name);
-      for(auto pv : input_pv_ins_){
-        for(auto ins : pv->ads){
-          ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":" << ins->cur_timestamp_ << " ";
+      for (auto pv : input_pv_ins_) {
+        for (auto ins : pv->ads) {
+          ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":"
+              << ins->cur_timestamp_ << " ";
         }
-          ofs << "\n";
-    }
+        ofs << "\n";
+      }
       ofs.close();
-  }
-  VLOG(0) << "test timestamp range: [" << test_timestamp_range_.first << ", " << test_timestamp_range_.second << ")";
-  size_t all_pv_ins_size = input_pv_ins_.size();
-    
-  for(auto& pv : input_pv_ins_){
-    if(pv->ads.back()->cur_timestamp_ < test_timestamp_range_.first){
-      delete pv;
-      pv = NULL;
     }
+    VLOG(0) << "test timestamp range: [" << test_timestamp_range_.first << ", "
+            << test_timestamp_range_.second << ")";
+    size_t all_pv_ins_size = input_pv_ins_.size();
+
+    for (auto& pv : input_pv_ins_) {
+      if (pv->ads.back()->cur_timestamp_ < test_timestamp_range_.first) {
+        delete pv;
+        pv = NULL;
+      }
+    }
+
+    input_pv_ins_.erase(
+        std::remove_if(input_pv_ins_.begin(),
+                       input_pv_ins_.end(),
+                       [this](SlotPvInstance pv) { return pv == NULL; }),
+        input_pv_ins_.end());
+    size_t range_pv_ins_size = input_pv_ins_.size();
+    VLOG(0) << "before filter pv_ins size: " << all_pv_ins_size
+            << ", after filter pv_ins size: " << range_pv_ins_size;
   }
 
-  input_pv_ins_.erase(std::remove_if(input_pv_ins_.begin(), input_pv_ins_.end(), [this](SlotPvInstance pv){
-          return pv == NULL;
-        }), input_pv_ins_.end());
-  size_t range_pv_ins_size = input_pv_ins_.size();
-  VLOG(0) << "before filter pv_ins size: " << all_pv_ins_size
-          << ", after filter pv_ins size: " << range_pv_ins_size;
-  }
-
-  if(FLAGS_dump_pv_ins){
+  if (FLAGS_dump_pv_ins) {
     static int index = 0;
     std::string file_name = "pv_ins_" + std::to_string(index++) + ".txt";
     std::ofstream ofs(file_name);
-    for(auto pv : input_pv_ins_){
-      for(auto ins : pv->ads){
-        ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":" << ins->cur_timestamp_ << " ";
+    for (size_t i = 0; i < input_pv_ins_.size(); ++i) {
+      if (merge_by_uid_split_method_ == 2) {
+        ofs << "zero_mask_num:" << zero_mask_num_[i] << " ";
+      }
+      for (auto ins : input_pv_ins_[i]->ads) {
+        ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":"
+            << ins->cur_timestamp_ << " ";
       }
       ofs << "\n";
     }
     ofs.close();
   }
-
 }
 // restore
 void PadBoxSlotDataset::PostprocessInstance() {}
 
 static int compute_paddlebox_thread_batch_nccl(
-    const int thr_num, const int64_t total_instance_num,
-    const int minibatch_size, std::vector<std::pair<int, int>>* nccl_offsets) {
+    const int thr_num,
+    const int64_t total_instance_num,
+    const int minibatch_size,
+    std::vector<std::pair<int, int>>* nccl_offsets) {
   int thread_avg_batch_num = 0;
   if (total_instance_num < static_cast<int64_t>(thr_num)) {
     LOG(WARNING) << "compute_thread_batch_nccl total ins num:["
@@ -2848,8 +2941,8 @@ static int compute_paddlebox_thread_batch_nccl(
     }
     int split_start = offset[offset_split_index].first;
     offset.resize(offset_split_index);
-    compute_left_batch_num(split_left_num, need_batch_num, &offset,
-                           split_start);
+    compute_left_batch_num(
+        split_left_num, need_batch_num, &offset, split_start);
     LOG(WARNING) << "total sum ins " << sum_total_ins_num << ", thread_num "
                  << thr_num << ", ins num " << total_instance_num
                  << ", batch num " << offset.size() << ", thread avg batch num "
@@ -2890,23 +2983,48 @@ void PadBoxSlotDataset::PrepareTrain(void) {
 
   std::vector<std::pair<int, int>> offset;
   // join or aucrunner mode enable pv
-  if (enable_pv_merge_ && (box_ptr->Phase() & 0x01 == 1 ||
-                           box_ptr->Mode() == 1 ||
-                           merge_by_uid_)) {
-    if (!FLAGS_padbox_disable_ins_shuffle) {
-      std::shuffle(input_pv_ins_.begin(), input_pv_ins_.end(),
-                 BoxWrapper::LocalRandomEngine());
+  if (enable_pv_merge_ &&
+      (box_ptr->Phase() & 0x01 == 1 || box_ptr->Mode() == 1 || merge_by_uid_)) {
+    if (!FLAGS_padbox_disable_ins_shuffle && merge_by_uid_ &&
+        merge_by_uid_split_method_ == 2) {
+      PADDLE_ENFORCE_EQ(
+          input_pv_ins_.size(),
+          zero_mask_num_.size(),
+          platform::errors::InvalidArgument(
+              "The number of instances and the number of masks are not equal"));
+      size_t pv_size = input_pv_ins_.size();
+      std::vector<int> tmp_zero_mask_num(pv_size);
+      std::vector<SlotPvInstance> tmp_input_pv_ins(pv_size);
+      std::vector<int> indices(pv_size);
+      std::iota(indices.begin(), indices.end(), 0);
+
+      std::shuffle(
+          indices.begin(), indices.end(), BoxWrapper::LocalRandomEngine());
+      for (size_t i = 0; i < pv_size; ++i) {
+        tmp_input_pv_ins[i] = input_pv_ins_[indices[i]];
+        tmp_zero_mask_num[i] = zero_mask_num_[indices[i]];
+      }
+      input_pv_ins_.swap(tmp_input_pv_ins);
+      zero_mask_num_.swap(tmp_zero_mask_num);
+    }
+    else if (!FLAGS_padbox_disable_ins_shuffle) {
+      std::shuffle(input_pv_ins_.begin(),
+                   input_pv_ins_.end(),
+                   BoxWrapper::LocalRandomEngine());
     }
     // 分数据到各线程里面
     int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
                         ->GetPvBatchSize();
-    compute_paddlebox_thread_batch_nccl(thread_num_, GetPvDataSize(), batchsize, &offset);
+    compute_paddlebox_thread_batch_nccl(
+        thread_num_, GetPvDataSize(), batchsize, &offset);
     for (int i = 0; i < thread_num_; ++i) {
       SlotPaddleBoxDataFeed* feed =
           reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[i].get());
       feed->SetEnablePvMerge(enable_pv_merge_);
       feed->SetMergeByUid(merge_by_uid_);
+      feed->SetSeqSplitMethod(merge_by_uid_split_method_);
       feed->SetPvInstance(&input_pv_ins_[0]);
+      feed->SetZeroMaskNums(&zero_mask_num_[0]);
     }
     for (size_t i = 0; i < offset.size(); ++i) {
       reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[i % thread_num_].get())
@@ -2914,14 +3032,15 @@ void PadBoxSlotDataset::PrepareTrain(void) {
     }
   } else {
     if (!FLAGS_padbox_disable_ins_shuffle) {
-      std::shuffle(input_records_.begin(), input_records_.end(),
-                 BoxWrapper::LocalRandomEngine());
+      std::shuffle(input_records_.begin(),
+                   input_records_.end(),
+                   BoxWrapper::LocalRandomEngine());
     }
     // 分数据到各线程里面
     int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
                         ->GetBatchSize();
-    compute_paddlebox_thread_batch_nccl(thread_num_, GetMemoryDataSize(), batchsize,
-                              &offset);
+    compute_paddlebox_thread_batch_nccl(
+        thread_num_, GetMemoryDataSize(), batchsize, &offset);
     for (int i = 0; i < thread_num_; ++i) {
       SlotPaddleBoxDataFeed* feed =
           reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[i].get());
