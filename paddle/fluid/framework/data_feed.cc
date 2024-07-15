@@ -3179,6 +3179,7 @@ int SlotPaddleBoxDataFeed::Next() {
     return this->batch_size_;
   } else {
     this->batch_size_ = batch.second;
+    VLOG(1) << "thread id " << thread_id_ << ", batch size: " << this->batch_size_;
     batch_timer_.Resume();
     PutToFeedSlotVec(&records_[batch.first], this->batch_size_);
 #if defined(PADDLE_WITH_CUDA) && defined(_LINUX)

@@ -41,6 +41,7 @@ DECLARE_bool(graph_get_neighbor_id);
 DECLARE_bool(dump_pv_ins);
 DECLARE_bool(padbox_dataset_enable_unrollinstance);
 DECLARE_bool(compute_batch_by_seq_length);
+DECLARE_bool(enable_pv_merge_in_update);
 
 PADDLE_DEFINE_EXPORTED_bool(padbox_disable_ins_shuffle,
                             false,
@@ -49,6 +50,9 @@ PADDLE_DEFINE_EXPORTED_bool(dump_pv_ins,
                             false,
                             "dump pv instance ,default false");
 PADDLE_DEFINE_EXPORTED_bool(compute_batch_by_seq_length,
+                            false,
+                            "paddle compute batch by seq length, default false");
+PADDLE_DEFINE_EXPORTED_bool(enable_pv_merge_in_update,
                             false,
                             "paddle compute batch by seq length, default false");
 namespace paddle {
@@ -3060,7 +3064,7 @@ void PadBoxSlotDataset::PrepareTrain(void) {
   std::vector<std::pair<int, int>> offset;
   // join or aucrunner mode enable pv
   if (enable_pv_merge_ &&
-      (box_ptr->Phase() & 0x01 == 1 || box_ptr->Mode() == 1 || merge_by_uid_)) {
+      (box_ptr->Phase() & 0x01 == 1 || box_ptr->Mode() == 1 || box_ptr->Phase() & 0x01 == 0 && FLAGS_enable_pv_merge_in_update)) {
     if (!FLAGS_padbox_disable_ins_shuffle && merge_by_uid_ &&
         merge_by_uid_split_method_ == 2) {
       PADDLE_ENFORCE_EQ(
