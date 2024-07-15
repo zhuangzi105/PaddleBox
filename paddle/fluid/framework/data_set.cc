@@ -40,12 +40,17 @@ USE_INT_STAT(STAT_total_feasign_num_in_mem);
 DECLARE_bool(graph_get_neighbor_id);
 DECLARE_bool(dump_pv_ins);
 DECLARE_bool(padbox_dataset_enable_unrollinstance);
+DECLARE_bool(compute_batch_by_seq_length);
+
 PADDLE_DEFINE_EXPORTED_bool(padbox_disable_ins_shuffle,
                             false,
                             "paddle disable ins shuffle ,default false");
 PADDLE_DEFINE_EXPORTED_bool(dump_pv_ins,
                             false,
                             "dump pv instance ,default false");
+PADDLE_DEFINE_EXPORTED_bool(compute_batch_by_seq_length,
+                            false,
+                            "paddle compute batch by seq length, default false");
 namespace paddle {
 namespace framework {
 
@@ -330,6 +335,26 @@ static void compute_left_batch_num(const int ins_num, const int thread_num,
 }
 
 /**
+ * @Brief
+ * Split the remaining data to remain thread (make sure offset.size() % thread_num = 0)
+ */
+static void compute_left_pv_batch_num(int ins_num, const int remain_batch_num,
+                                   std::vector<std::pair<int, int>>* offset,
+                                   const int start_pos) {
+  int cur_pos = start_pos;
+  int batch_size = ins_num / remain_batch_num;
+  int left_num = ins_num % remain_batch_num;
+  for (int i = 0; i < remain_batch_num; ++i) {
+    int batch_num_size = batch_size;
+    if (i < left_num) {
+      batch_num_size = batch_num_size + 1;
+    }
+    offset->push_back(std::make_pair(cur_pos, batch_num_size));
+    cur_pos += batch_num_size;
+  }
+}
+
+/**
  * @brief
  * distributed to each thread according to the amount of data
  */
@@ -362,6 +387,31 @@ static void compute_batch_num(const int64_t ins_num, const int batch_size,
     }
     if (left_ins_num > 0) {
       compute_left_batch_num(left_ins_num, thread_num, offset, cur_pos);
+    }
+  }
+}
+static void compute_pv_batch_num(const std::vector<int>& pv_length_vec, const int max_seq_length, const int batch_size,
+                              const int thread_num,
+                              std::vector<std::pair<int, int>>* offset) {
+  if (pv_length_vec.size() == 0){
+    return;
+  }
+  int batch_max_seq_size = batch_size / max_seq_length;
+  int batch_ins_num = 0;
+  offset->push_back({0, 1});
+  for(size_t i = 1; i < pv_length_vec.size(); ++i){
+    if(pv_length_vec.size() - i <= (thread_num - offset->size() % thread_num) * batch_max_seq_size){
+        int remain_batch_num = thread_num - (offset->size() % thread_num);
+        int remain_ins_num = pv_length_vec.size() - i;
+        compute_left_pv_batch_num(remain_ins_num, remain_batch_num, offset, i);
+        break;
+    }
+    if(batch_ins_num + pv_length_vec[i] < batch_size){
+        offset->back().second += 1;
+        batch_ins_num += pv_length_vec[i];
+    } else {
+        offset->push_back({i, 1});
+        batch_ins_num = pv_length_vec[i];
     }
   }
 }
@@ -2891,6 +2941,7 @@ void PadBoxSlotDataset::PreprocessInstance() {
 // restore
 void PadBoxSlotDataset::PostprocessInstance() {}
 
+static int nccl_batch(int& thread_avg_batch_num, const int total_instance_num, const int thr_num, std::vector<std::pair<int, int>>& offset);
 static int compute_paddlebox_thread_batch_nccl(
     const int thr_num,
     const int64_t total_instance_num,
@@ -2908,7 +2959,32 @@ static int compute_paddlebox_thread_batch_nccl(
   // split data avg by thread num
   compute_batch_num(total_instance_num, minibatch_size, thr_num, &offset);
   thread_avg_batch_num = static_cast<int>(offset.size() / thr_num);
+  return nccl_batch(thread_avg_batch_num, total_instance_num, thr_num, offset);
+}
 
+static int compute_paddlebox_thread_pv_batch_nccl(
+    const int thr_num,
+    const std::vector<int>& seq_length_vec,
+    const int max_seq_lenth,
+    const int minibatch_size,
+    std::vector<std::pair<int, int>>* nccl_offsets) {
+  int thread_avg_batch_num = 0;
+  if (seq_length_vec.size() < static_cast<size_t>(thr_num)) {
+    LOG(WARNING) << "compute_paddlebox_thread_pv_batch_nccl total ins num:["
+                 << seq_length_vec.size() << "], less thread num:[" << thr_num
+                 << "]";
+    return thread_avg_batch_num;
+  }
+
+  auto& offset = (*nccl_offsets);
+  // split data avg by thread num
+  compute_pv_batch_num(seq_length_vec, max_seq_lenth, minibatch_size, thr_num, &offset);
+  thread_avg_batch_num = static_cast<int>(offset.size() / thr_num);
+  const int total_instance_num = seq_length_vec.size();
+  return nccl_batch(thread_avg_batch_num, total_instance_num, thr_num, offset);
+}
+
+static int nccl_batch(int& thread_avg_batch_num, const int total_instance_num, const int thr_num, std::vector<std::pair<int, int>>& offset){
   auto& mpi = boxps::MPICluster::Ins();
   if (mpi.size() > 1) {
     // 这里主要针对NCCL需要相同的minibatch才能正常处理
@@ -3013,10 +3089,23 @@ void PadBoxSlotDataset::PrepareTrain(void) {
                    BoxWrapper::LocalRandomEngine());
     }
     // 分数据到各线程里面
-    int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
-                        ->GetPvBatchSize();
-    compute_paddlebox_thread_batch_nccl(
-        thread_num_, GetPvDataSize(), batchsize, &offset);
+
+    if(FLAGS_compute_batch_by_seq_length){
+      int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
+                          ->GetBatchSize();
+      std::vector<int> pv_length_vec(input_pv_ins_.size());
+      for(size_t i = 0; i < input_pv_ins_.size(); ++i){
+        pv_length_vec[i] = input_pv_ins_[i]->ads.size();
+      }
+      compute_paddlebox_thread_pv_batch_nccl(
+          thread_num_, pv_length_vec, merge_by_uid_split_size_, batchsize, &offset);
+    } else {
+      int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
+                      ->GetPvBatchSize();
+      compute_paddlebox_thread_batch_nccl(
+          thread_num_, GetPvDataSize(), batchsize, &offset);
+    }
+
     for (int i = 0; i < thread_num_; ++i) {
       SlotPaddleBoxDataFeed* feed =
           reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[i].get());

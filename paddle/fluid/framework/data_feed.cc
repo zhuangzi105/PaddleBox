@@ -3233,7 +3233,7 @@ void SlotPaddleBoxDataFeed::PutToFeedPvVec(const SlotPvInstance* pvs,
   pack_->pack_pvinstance(pvs, num, zero_mask_num);
   int ins_num = pack_->ins_num();
   int pv_num = pack_->pv_num();
-  VLOG(1) << "thread id " << thread_id_ << ", pv_nums:" << pv_num << ", ins_num:" << ins_num << "merge_by_uid_split_method_" << merge_by_uid_split_method_;
+  VLOG(1) << "thread id " << thread_id_ << ", pv_nums:" << pv_num << ", ins_num:" << ins_num << ", merge_by_uid_split_method_" << merge_by_uid_split_method_;
   if (merge_by_uid_){
     GetAdsOffsetGPU(pv_num, ins_num);
     GetTimestampGPU(pv_num, ins_num);
