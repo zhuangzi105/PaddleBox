@@ -214,6 +214,17 @@ void DatasetImpl<T>::SetMergeByUid(bool is_merge,
 }
 
 template <typename T>
+void DatasetImpl<T>::SetInvalidUsers(std::unordered_set<std::string> invalid_users) {
+  invalid_users_ = invalid_users;
+  if (invalid_users_.size() > 0) {
+    VLOG(1) << "Set invalid users: ";
+    for (auto users : invalid_users_) {
+      VLOG(1) << users ;
+    }
+  }
+}
+
+template <typename T>
 void DatasetImpl<T>::SetTestMode(bool is_test) {
   is_test_ = is_test;
 }
@@ -2834,6 +2845,14 @@ void PadBoxSlotDataset::PreprocessInstance() {
     size_t ins_count = 0;
     for (i = 0; i < all_records_num; i += ins_count) {
       std::string now_user_id = input_records_[i]->user_id_;
+      if(invalid_users_.find(now_user_id) != invalid_users_.end()) {
+        SlotPvInstance pv_instance = make_slotpv_instance();
+        input_pv_ins_.push_back(pv_instance);
+        input_pv_ins_.back()->merge_instance(input_records_[i]);
+        ins_count = 1;
+        zero_mask_num_.push_back(0);
+        continue;
+      }
       for (ins_count = 1;
            i + ins_count < all_records_num &&
            now_user_id == input_records_[i + ins_count]->user_id_;
@@ -3064,7 +3083,7 @@ void PadBoxSlotDataset::PrepareTrain(void) {
   std::vector<std::pair<int, int>> offset;
   // join or aucrunner mode enable pv
   if (enable_pv_merge_ &&
-      (box_ptr->Phase() & 0x01 == 1 || box_ptr->Mode() == 1 || box_ptr->Phase() & 0x01 == 0 && FLAGS_enable_pv_merge_in_update)) {
+      ((box_ptr->Phase() & 0x01) == 1 || box_ptr->Mode() == 1 || (box_ptr->Phase() & 0x01) == 0 && FLAGS_enable_pv_merge_in_update)) {
     if (!FLAGS_padbox_disable_ins_shuffle && merge_by_uid_ &&
         merge_by_uid_split_method_ == 2) {
       PADDLE_ENFORCE_EQ(
@@ -3108,6 +3127,18 @@ void PadBoxSlotDataset::PrepareTrain(void) {
                       ->GetPvBatchSize();
       compute_paddlebox_thread_batch_nccl(
           thread_num_, GetPvDataSize(), batchsize, &offset);
+    }
+
+    if (FLAGS_dump_pv_ins) {
+      static int offset_index = 0;
+      std::string file_name =
+          "offset_" + std::to_string(offset_index++) + ".txt";
+      std::ofstream ofs(file_name);
+      for (auto offset_item : offset) {
+        ofs << offset_item.first << " " << offset_item.second;
+        ofs << "\n";
+      }
+      ofs.close();
     }
 
     for (int i = 0; i < thread_num_; ++i) {
