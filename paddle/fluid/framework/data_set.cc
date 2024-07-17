@@ -2805,9 +2805,6 @@ void PadBoxSlotDataset::PreprocessInstance() {
     }
     input_pv_ins_.clear();
   }
-  if (!zero_mask_num_.empty()) {
-    zero_mask_num_.clear();
-  }
 
   size_t all_records_num = input_records_.size();
   if (merge_by_uid_){
@@ -2850,7 +2847,7 @@ void PadBoxSlotDataset::PreprocessInstance() {
         input_pv_ins_.push_back(pv_instance);
         input_pv_ins_.back()->merge_instance(input_records_[i]);
         ins_count = 1;
-        zero_mask_num_.push_back(0);
+        input_pv_ins_.back()->set_zero_mask_num(0);
         continue;
       }
       for (ins_count = 1;
@@ -2878,15 +2875,15 @@ void PadBoxSlotDataset::PreprocessInstance() {
                                    merge_by_uid_split_train_size_,
                                    offset,
                                    zero_mask);
-        for (const auto& pair : offset) {
+        for (size_t j = 0; j < offset.size(); ++j) {
+          const auto& pair = offset[j];
           SlotPvInstance pv_instance = make_slotpv_instance();
           input_pv_ins_.push_back(pv_instance);
           for (size_t j = pair.first; j < pair.second; ++j) {
             input_pv_ins_.back()->merge_instance(input_records_[i + j]);
           }
+          input_pv_ins_.back()->set_zero_mask_num(zero_mask[j]);
         }
-        zero_mask_num_.insert(
-            zero_mask_num_.end(), zero_mask.begin(), zero_mask.end());
         VLOG(1) << "split the seq of " << now_user_id << " into "
                 << zero_mask.size() << " seqs.";
       } else {
@@ -2895,7 +2892,7 @@ void PadBoxSlotDataset::PreprocessInstance() {
         for (size_t j = 0; j < ins_count; ++j) {
           input_pv_ins_.back()->merge_instance(input_records_[i + j]);
         }
-        zero_mask_num_.push_back(0);
+        input_pv_ins_.back()->set_zero_mask_num(0);
       }
     }
   } else {
@@ -2950,7 +2947,7 @@ void PadBoxSlotDataset::PreprocessInstance() {
     std::ofstream ofs(file_name);
     for (size_t i = 0; i < input_pv_ins_.size(); ++i) {
       if (merge_by_uid_split_method_ == 2) {
-        ofs << "zero_mask_num:" << zero_mask_num_[i] << " ";
+        ofs << "zero_mask_num:" << input_pv_ins_[i]->get_zero_mask_num() << " ";
       }
       for (auto ins : input_pv_ins_[i]->ads) {
         ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":"
@@ -3084,29 +3081,7 @@ void PadBoxSlotDataset::PrepareTrain(void) {
   // join or aucrunner mode enable pv
   if (enable_pv_merge_ &&
       ((box_ptr->Phase() & 0x01) == 1 || box_ptr->Mode() == 1 || (box_ptr->Phase() & 0x01) == 0 && FLAGS_enable_pv_merge_in_update)) {
-    if (!FLAGS_padbox_disable_ins_shuffle && merge_by_uid_ &&
-        merge_by_uid_split_method_ == 2) {
-      PADDLE_ENFORCE_EQ(
-          input_pv_ins_.size(),
-          zero_mask_num_.size(),
-          platform::errors::InvalidArgument(
-              "The number of instances and the number of masks are not equal"));
-      size_t pv_size = input_pv_ins_.size();
-      std::vector<int> tmp_zero_mask_num(pv_size);
-      std::vector<SlotPvInstance> tmp_input_pv_ins(pv_size);
-      std::vector<int> indices(pv_size);
-      std::iota(indices.begin(), indices.end(), 0);
-
-      std::shuffle(
-          indices.begin(), indices.end(), BoxWrapper::LocalRandomEngine());
-      for (size_t i = 0; i < pv_size; ++i) {
-        tmp_input_pv_ins[i] = input_pv_ins_[indices[i]];
-        tmp_zero_mask_num[i] = zero_mask_num_[indices[i]];
-      }
-      input_pv_ins_.swap(tmp_input_pv_ins);
-      zero_mask_num_.swap(tmp_zero_mask_num);
-    }
-    else if (!FLAGS_padbox_disable_ins_shuffle) {
+    if (!FLAGS_padbox_disable_ins_shuffle) {
       std::shuffle(input_pv_ins_.begin(),
                    input_pv_ins_.end(),
                    BoxWrapper::LocalRandomEngine());
@@ -3148,7 +3123,6 @@ void PadBoxSlotDataset::PrepareTrain(void) {
       feed->SetMergeByUid(merge_by_uid_);
       feed->SetSeqSplitMethod(merge_by_uid_split_method_);
       feed->SetPvInstance(&input_pv_ins_[0]);
-      feed->SetZeroMaskNums(&zero_mask_num_[0]);
     }
     for (size_t i = 0; i < offset.size(); ++i) {
       reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[i % thread_num_].get())

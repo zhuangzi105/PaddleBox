@@ -480,12 +480,15 @@ struct UsedSlotGpuType {
 };
 
 struct SlotPvInstanceObject {
+  int zero_mask_num_ = 0;
   std::vector<SlotRecord> ads;
   ~SlotPvInstanceObject() {
     ads.clear();
     ads.shrink_to_fit();
   }
   void merge_instance(SlotRecord ins) { ads.push_back(ins); }
+  void set_zero_mask_num(int zero_mask_num) { zero_mask_num_ = zero_mask_num; }
+  int get_zero_mask_num(void) { return zero_mask_num_; }
 };
 using SlotPvInstance = SlotPvInstanceObject*;
 inline SlotPvInstance make_slotpv_instance() {
@@ -531,9 +534,7 @@ class MiniBatchGpuPack {
   void set_merge_by_uid(bool merge_by_uid);
   void set_merge_by_uid_split_method(int split_method);
   void reset(const paddle::platform::Place& place);
-  void pack_pvinstance(const SlotPvInstance* pv_ins,
-                       int num,
-                       const int* zero_mask_num);
+  void pack_pvinstance(const SlotPvInstance* pv_ins, int num);
   void pack_instance(const SlotRecord* ins_vec, int num);
   int ins_num() { return ins_num_; }
   int pv_num() { return pv_num_; }
@@ -2134,7 +2135,6 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   int GetBatchSize() { return default_batch_size_; }
   int GetPvBatchSize() { return pv_batch_size_; }
   void SetPvInstance(SlotPvInstance* pv_ins) { pv_ins_ = pv_ins; }
-  void SetZeroMaskNums(int* zero_mask_num) { zero_mask_num_ = zero_mask_num; }
   void SetSlotRecord(SlotRecord* records) { records_ = records; }
   void AddBatchOffset(const std::pair<int, int>& off) {
     batch_offsets_.push_back(off);
@@ -2159,9 +2159,7 @@ class SlotPaddleBoxDataFeed : public DataFeed {
  protected:
   virtual void LoadIntoMemoryByCommand(void);
   virtual void LoadIntoMemoryByLib(void);
-  void PutToFeedPvVec(const SlotPvInstance* pvs,
-                      int num,
-                      const int* zero_mask_num);
+  void PutToFeedPvVec(const SlotPvInstance* pvs, int num);
   void PutToFeedSlotVec(const SlotRecord* recs, int num);
   void BuildSlotBatchGPU(const int ins_num);
   void GetRankOffsetGPU(const int pv_num, const int ins_num);
@@ -2246,7 +2244,6 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   int offset_index_ = 0;
   std::vector<std::pair<int, int>> batch_offsets_;
   SlotPvInstance* pv_ins_ = nullptr;
-  int* zero_mask_num_ = nullptr;
   SlotRecord* records_ = nullptr;
   std::vector<AllSlotInfo> all_slots_info_;
   std::vector<UsedSlotInfo> used_slots_info_;

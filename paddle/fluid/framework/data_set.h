@@ -554,7 +554,6 @@ class PadBoxSlotDataset : public DatasetImpl<SlotRecord> {
   int mpi_size_ = 1;
   int mpi_rank_ = 0;
   std::vector<SlotPvInstance> input_pv_ins_;
-  std::vector<int> zero_mask_num_;
   int shuffle_thread_num_ = FLAGS_padbox_dataset_shuffle_thread_num;
   std::atomic<int> shuffle_counter_{0};
   void* data_consumer_ = nullptr;

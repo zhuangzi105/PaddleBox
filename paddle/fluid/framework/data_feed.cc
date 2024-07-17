@@ -3168,9 +3168,7 @@ int SlotPaddleBoxDataFeed::Next() {
     this->batch_size_ = batch.second;
     if (this->batch_size_ != 0) {
       batch_timer_.Resume();
-      PutToFeedPvVec(&pv_ins_[batch.first],
-                     this->batch_size_,
-                     &zero_mask_num_[batch.first]);
+      PutToFeedPvVec(&pv_ins_[batch.first], this->batch_size_);
       batch_timer_.Pause();
 
     } else {
@@ -3219,19 +3217,19 @@ void SlotPaddleBoxDataFeed::AssignFeedVar(const Scope& scope) {
   if (enable_pv_merge_ && merge_by_uid_){
     ads_offset_ = scope.FindVar(ads_offset_name_)->GetMutable<LoDTensor>();
     ads_timestamp_ = scope.FindVar(ads_timestamp_name_)->GetMutable<LoDTensor>();
-    ads_train_mask_ = scope.FindVar(ads_train_mask_name_)->GetMutable<LoDTensor>();
+    if (merge_by_uid_split_method_ == 2){
+      ads_train_mask_ = scope.FindVar(ads_train_mask_name_)->GetMutable<LoDTensor>(); // for windows split
+    }
   } else if (enable_pv_merge_) {
     rank_offset_ = scope.FindVar(rank_offset_name_)->GetMutable<LoDTensor>();
   }
 }
-void SlotPaddleBoxDataFeed::PutToFeedPvVec(const SlotPvInstance* pvs,
-                                           int num,
-                                           const int* zero_mask_num) {
+void SlotPaddleBoxDataFeed::PutToFeedPvVec(const SlotPvInstance* pvs, int num) {
 #if defined(PADDLE_WITH_CUDA) && defined(_LINUX)
   paddle::platform::SetDeviceId(place_.GetDeviceId());
   pack_->set_merge_by_uid(merge_by_uid_);
   pack_->set_merge_by_uid_split_method(merge_by_uid_split_method_);
-  pack_->pack_pvinstance(pvs, num, zero_mask_num);
+  pack_->pack_pvinstance(pvs, num);
   int ins_num = pack_->ins_num();
   int pv_num = pack_->pv_num();
   VLOG(1) << "thread id " << thread_id_ << ", pv_nums:" << pv_num << ", ins_num:" << ins_num << ", merge_by_uid_split_method_" << merge_by_uid_split_method_;
@@ -4761,9 +4759,7 @@ void MiniBatchGpuPack::set_merge_by_uid_split_method(int method) {
     merge_by_uid_split_method_ = method;
 }
 
-void MiniBatchGpuPack::pack_pvinstance(const SlotPvInstance* pv_ins,
-                                       int num,
-                                       const int* zero_mask_num) {
+void MiniBatchGpuPack::pack_pvinstance(const SlotPvInstance* pv_ins, int num) {
   pv_num_ = num;
   buf_.h_ad_offset.resize(num + 1);
   buf_.h_ad_offset[0] = 0;
@@ -4782,7 +4778,7 @@ void MiniBatchGpuPack::pack_pvinstance(const SlotPvInstance* pv_ins,
       }
     }
     if (enable_pv_by_uid_ && merge_by_uid_split_method_ == 2) {
-      int zero_num = zero_mask_num[i];
+      int zero_num = pv->get_zero_mask_num();
       buf_.h_train_mask.insert(buf_.h_train_mask.end(), zero_num, 0);
       buf_.h_train_mask.insert(
           buf_.h_train_mask.end(), pv->ads.size() - zero_num, 1);
