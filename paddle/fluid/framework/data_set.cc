@@ -411,16 +411,9 @@ static void compute_pv_batch_num(const std::vector<int>& pv_length_vec, const in
   if (pv_length_vec.size() == 0){
     return;
   }
-  int batch_max_seq_size = batch_size / max_seq_length;
   int batch_ins_num = 0;
   offset->push_back({0, 1});
   for(size_t i = 1; i < pv_length_vec.size(); ++i){
-    if(pv_length_vec.size() - i <= (thread_num - offset->size() % thread_num) * batch_max_seq_size){
-        int remain_batch_num = thread_num - (offset->size() % thread_num);
-        int remain_ins_num = pv_length_vec.size() - i;
-        compute_left_pv_batch_num(remain_ins_num, remain_batch_num, offset, i);
-        break;
-    }
     if(batch_ins_num + pv_length_vec[i] < batch_size){
         offset->back().second += 1;
         batch_ins_num += pv_length_vec[i];
@@ -428,6 +421,21 @@ static void compute_pv_batch_num(const std::vector<int>& pv_length_vec, const in
         offset->push_back({i, 1});
         batch_ins_num = pv_length_vec[i];
     }
+  }
+  if (offset->size() % thread_num != 0){
+    int total_instance_num = pv_length_vec.size();
+    int need_batch_num = thread_num - offset->size() % thread_num + 1;
+    int offset_split_index = static_cast<int>(offset->size() - 1);
+    int split_left_num = total_instance_num - offset->at(offset_split_index).first;
+    while (split_left_num < need_batch_num) {
+      need_batch_num += 1;
+      offset_split_index -= 1;
+      split_left_num = total_instance_num - offset->at(offset_split_index).first;
+    }
+    int split_start = offset->at(offset_split_index).first;
+    offset->resize(offset_split_index);
+    compute_left_pv_batch_num(
+        split_left_num, need_batch_num, offset, split_start);
   }
 }
 
