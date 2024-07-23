@@ -3162,6 +3162,7 @@ int SlotPaddleBoxDataFeed::Next() {
   if (offset_index_ >= static_cast<int>(batch_offsets_.size())) {
     return 0;
   }
+  pack_->set_need_time_info(need_time_info_);
   auto& batch = batch_offsets_[offset_index_++];
   if (enable_pv_merge_) {
     // join phase : output_pv_channel to consume_pv_channel
@@ -3216,12 +3217,15 @@ void SlotPaddleBoxDataFeed::AssignFeedVar(const Scope& scope) {
   // set rank offset memory
   if (enable_pv_merge_ && merge_by_uid_){
     ads_offset_ = scope.FindVar(ads_offset_name_)->GetMutable<LoDTensor>();
-    ads_timestamp_ = scope.FindVar(ads_timestamp_name_)->GetMutable<LoDTensor>();
     if (merge_by_uid_split_method_ == 2){
       ads_train_mask_ = scope.FindVar(ads_train_mask_name_)->GetMutable<LoDTensor>(); // for windows split
     }
   } else if (enable_pv_merge_) {
     rank_offset_ = scope.FindVar(rank_offset_name_)->GetMutable<LoDTensor>();
+  }
+
+  if (need_time_info_){
+    ads_timestamp_ = scope.FindVar(ads_timestamp_name_)->GetMutable<LoDTensor>();
   }
 }
 void SlotPaddleBoxDataFeed::PutToFeedPvVec(const SlotPvInstance* pvs, int num) {
@@ -3325,6 +3329,9 @@ void SlotPaddleBoxDataFeed::PutToFeedSlotVec(const SlotRecord* ins_vec,
 #if defined(PADDLE_WITH_CUDA) && defined(_LINUX)
   paddle::platform::SetDeviceId(place_.GetDeviceId());
   pack_->pack_instance(ins_vec, num);
+  if (need_time_info_) {
+    GetTimestampGPU(0, pack_->ins_num());
+  }
   BuildSlotBatchGPU(pack_->ins_num());
 #else
   batch_ins_num_ = num;
@@ -4758,6 +4765,10 @@ void MiniBatchGpuPack::set_merge_by_uid(bool merge_by_uid) {
 void MiniBatchGpuPack::set_merge_by_uid_split_method(int method) {
     merge_by_uid_split_method_ = method;
 }
+void MiniBatchGpuPack::set_need_time_info(bool need_time_info){
+    need_time_info_ = need_time_info;
+}
+
 
 void MiniBatchGpuPack::pack_pvinstance(const SlotPvInstance* pv_ins, int num) {
   pv_num_ = num;
@@ -4766,16 +4777,12 @@ void MiniBatchGpuPack::pack_pvinstance(const SlotPvInstance* pv_ins, int num) {
   size_t ins_number = 0;
 
   ins_vec_.clear();
-  buf_.h_timestamp.clear();
   buf_.h_train_mask.clear();
   for (int i = 0; i < num; ++i) {
     auto& pv = pv_ins[i];
     ins_number += pv->ads.size();
     for (auto ins : pv->ads) {
       ins_vec_.push_back(ins);
-      if (enable_pv_by_uid_){
-        buf_.h_timestamp.push_back(ins->cur_timestamp_);
-      }
     }
     if (enable_pv_by_uid_ && merge_by_uid_split_method_ == 2) {
       int zero_num = pv->get_zero_mask_num();
@@ -4800,6 +4807,9 @@ void MiniBatchGpuPack::pack_all_data(const SlotRecord* ins_vec, int num) {
   buf_.h_uint64_lens[0] = 0;
   buf_.h_float_lens.resize(num + 1);
   buf_.h_float_lens[0] = 0;
+  if (need_time_info_){
+    buf_.h_timestamp.resize(num); 
+  }
 
   if (enable_pv_) {
     for (int i = 0; i < num; ++i) {
@@ -4819,6 +4829,9 @@ void MiniBatchGpuPack::pack_all_data(const SlotRecord* ins_vec, int num) {
       buf_.h_uint64_lens[i + 1] = uint64_total_num;
       float_total_num += r->slot_float_feasigns_.slot_values.size();
       buf_.h_float_lens[i + 1] = float_total_num;
+      if (need_time_info_){
+        buf_.h_timestamp[i] = r->cur_timestamp_; 
+      }
     }
   }
 
@@ -4872,9 +4885,13 @@ void MiniBatchGpuPack::pack_uint64_data(const SlotRecord* ins_vec, int num) {
   buf_.h_float_lens.clear();
   buf_.h_float_keys.clear();
   buf_.h_float_offset.clear();
+  buf_.h_timestamp.clear();
 
   buf_.h_uint64_lens.resize(num + 1);
   buf_.h_uint64_lens[0] = 0;
+  if (need_time_info_){
+    buf_.h_timestamp.resize(num); 
+  }
 
   if (enable_pv_) {
     for (int i = 0; i < num; ++i) {
@@ -4890,6 +4907,9 @@ void MiniBatchGpuPack::pack_uint64_data(const SlotRecord* ins_vec, int num) {
       auto r = ins_vec[i];
       uint64_total_num += r->slot_uint64_feasigns_.slot_values.size();
       buf_.h_uint64_lens[i + 1] = uint64_total_num;
+      if (need_time_info_){
+        buf_.h_timestamp[i] = r->cur_timestamp_; 
+      }
     }
   }
 
@@ -4923,9 +4943,13 @@ void MiniBatchGpuPack::pack_float_data(const SlotRecord* ins_vec, int num) {
   buf_.h_uint64_lens.clear();
   buf_.h_uint64_offset.clear();
   buf_.h_uint64_keys.clear();
+  buf_.h_timestamp.clear();
 
   buf_.h_float_lens.resize(num + 1);
   buf_.h_float_lens[0] = 0;
+  if (need_time_info_){
+    buf_.h_timestamp.resize(num); 
+  }
 
   if (enable_pv_) {
     for (int i = 0; i < num; ++i) {
@@ -4941,6 +4965,9 @@ void MiniBatchGpuPack::pack_float_data(const SlotRecord* ins_vec, int num) {
       auto r = ins_vec[i];
       float_total_num += r->slot_float_feasigns_.slot_values.size();
       buf_.h_float_lens[i + 1] = float_total_num;
+      if (need_time_info_){
+        buf_.h_timestamp[i] = r->cur_timestamp_; 
+      }
     }
   }
 

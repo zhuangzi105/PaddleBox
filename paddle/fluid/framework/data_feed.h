@@ -533,6 +533,7 @@ class MiniBatchGpuPack {
   ~MiniBatchGpuPack();
   void set_merge_by_uid(bool merge_by_uid);
   void set_merge_by_uid_split_method(int split_method);
+  void set_need_time_info(bool need_time_info);
   void reset(const paddle::platform::Place& place);
   void pack_pvinstance(const SlotPvInstance* pv_ins, int num);
   void pack_instance(const SlotRecord* ins_vec, int num);
@@ -619,6 +620,7 @@ class MiniBatchGpuPack {
 
   bool enable_pv_ = false;
   bool enable_pv_by_uid_ = false;
+  bool need_time_info_ = false;
   int merge_by_uid_split_method_ = 0; // 0 no split, 1 direct split, 2 mask split
   int used_float_num_ = 0;
   int used_uint64_num_ = 0;
@@ -2107,6 +2109,11 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   virtual void SetSeqSplitMethod(int merge_by_uid_split_method) {
     merge_by_uid_split_method_ = merge_by_uid_split_method;
   }
+
+  virtual void SetNeedTimeInfo(bool need_time_info) {
+    need_time_info_ = need_time_info;
+  }
+
   void SetTestMode(bool is_test) {
     is_test_ = is_test;
   }
@@ -2213,6 +2220,7 @@ class SlotPaddleBoxDataFeed : public DataFeed {
   bool enable_pv_merge_ = false;
   bool merge_by_uid_ = false;
   int merge_by_uid_split_method_ = 0;
+  bool need_time_info_ = false;
   bool is_test_ = false;
   std::pair<uint64_t, uint64_t> test_timestamp_range_;
   int current_phase_{-1};  // only for untest
