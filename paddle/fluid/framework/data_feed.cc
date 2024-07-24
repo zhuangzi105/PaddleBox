@@ -4818,7 +4818,9 @@ void MiniBatchGpuPack::pack_all_data(const SlotRecord* ins_vec, int num) {
       buf_.h_uint64_lens[i + 1] = uint64_total_num;
       float_total_num += r->slot_float_feasigns_.slot_values.size();
       buf_.h_float_lens[i + 1] = float_total_num;
-
+      if (need_time_info_){
+        buf_.h_timestamp[i] = r->cur_timestamp_; 
+      }
       buf_.h_rank[i] = r->rank;
       buf_.h_cmatch[i] = r->cmatch;
     }
@@ -4898,7 +4900,9 @@ void MiniBatchGpuPack::pack_uint64_data(const SlotRecord* ins_vec, int num) {
       auto r = ins_vec[i];
       uint64_total_num += r->slot_uint64_feasigns_.slot_values.size();
       buf_.h_uint64_lens[i + 1] = uint64_total_num;
-
+      if (need_time_info_){
+        buf_.h_timestamp[i] = r->cur_timestamp_; 
+      }
       buf_.h_rank[i] = r->rank;
       buf_.h_cmatch[i] = r->cmatch;
     }
@@ -4956,7 +4960,9 @@ void MiniBatchGpuPack::pack_float_data(const SlotRecord* ins_vec, int num) {
       auto r = ins_vec[i];
       float_total_num += r->slot_float_feasigns_.slot_values.size();
       buf_.h_float_lens[i + 1] = float_total_num;
-
+      if (need_time_info_){
+        buf_.h_timestamp[i] = r->cur_timestamp_; 
+      }
       buf_.h_rank[i] = r->rank;
       buf_.h_cmatch[i] = r->cmatch;
     }
