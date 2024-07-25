@@ -50,11 +50,11 @@ PADDLE_DEFINE_EXPORTED_bool(dump_pv_ins,
                             false,
                             "dump pv instance ,default false");
 PADDLE_DEFINE_EXPORTED_bool(compute_batch_by_seq_length,
-                            false,
-                            "paddle compute batch by seq length, default false");
+    false,
+    "paddle compute batch by seq length, default false");
 PADDLE_DEFINE_EXPORTED_bool(enable_pv_merge_in_update,
-                            false,
-                            "paddle compute batch by seq length, default false");
+    false,
+    "paddle compute batch by seq length, default false");
 namespace paddle {
 namespace framework {
 
@@ -214,12 +214,13 @@ void DatasetImpl<T>::SetMergeByUid(bool is_merge,
 }
 
 template <typename T>
-void DatasetImpl<T>::SetInvalidUsers(std::unordered_set<std::string> invalid_users) {
+void DatasetImpl<T>::SetInvalidUsers(
+    std::unordered_set<std::string> invalid_users) {
   invalid_users_ = invalid_users;
   if (invalid_users_.size() > 0) {
     VLOG(1) << "Set invalid users: ";
     for (auto users : invalid_users_) {
-      VLOG(1) << users ;
+      VLOG(1) << users;
     }
   }
 }
@@ -232,6 +233,14 @@ void DatasetImpl<T>::SetNeedTimeInfo(bool need_time_info) {
 template <typename T>
 void DatasetImpl<T>::SetTestMode(bool is_test) {
   is_test_ = is_test;
+}
+
+template <typename T>
+void DatasetImpl<T>::SetTrainTimestamp(
+    std::pair<uint64_t, uint64_t> range) {
+  train_timestamp_range_ = range;
+  VLOG(1) << "Set train timestamp range: [" << train_timestamp_range_.first
+          << ", " << train_timestamp_range_.second << ")";
 }
 
 template <typename T>
@@ -356,11 +365,13 @@ static void compute_left_batch_num(const int ins_num, const int thread_num,
 
 /**
  * @Brief
- * Split the remaining data to remain thread (make sure offset.size() % thread_num = 0)
+ * Split the remaining data to remain thread (make sure offset.size() %
+ * thread_num = 0)
  */
-static void compute_left_pv_batch_num(int ins_num, const int remain_batch_num,
-                                   std::vector<std::pair<int, int>>* offset,
-                                   const int start_pos) {
+static void compute_left_pv_batch_num(int ins_num,
+                                      const int remain_batch_num,
+                                      std::vector<std::pair<int, int>>* offset,
+                                      const int start_pos) {
   int cur_pos = start_pos;
   int batch_size = ins_num / remain_batch_num;
   int left_num = ins_num % remain_batch_num;
@@ -378,7 +389,8 @@ static void compute_left_pv_batch_num(int ins_num, const int remain_batch_num,
  * @brief
  * distributed to each thread according to the amount of data
  */
-static void compute_batch_num(const int64_t ins_num, const int batch_size,
+static void compute_batch_num(const int64_t ins_num,
+                              const int batch_size,
                               const int thread_num,
                               std::vector<std::pair<int, int>>* offset) {
   int thread_batch_num = batch_size * thread_num;
@@ -410,32 +422,36 @@ static void compute_batch_num(const int64_t ins_num, const int batch_size,
     }
   }
 }
-static void compute_pv_batch_num(const std::vector<int>& pv_length_vec, const int max_seq_length, const int batch_size,
-                              const int thread_num,
-                              std::vector<std::pair<int, int>>* offset) {
-  if (pv_length_vec.size() == 0){
+static void compute_pv_batch_num(const std::vector<int>& pv_length_vec,
+                                 const int max_seq_length,
+                                 const int batch_size,
+                                 const int thread_num,
+                                 std::vector<std::pair<int, int>>* offset) {
+  if (pv_length_vec.size() == 0) {
     return;
   }
   int batch_ins_num = 0;
   offset->push_back({0, 1});
-  for(size_t i = 1; i < pv_length_vec.size(); ++i){
-    if(batch_ins_num + pv_length_vec[i] < batch_size){
-        offset->back().second += 1;
-        batch_ins_num += pv_length_vec[i];
+  for (size_t i = 1; i < pv_length_vec.size(); ++i) {
+    if (batch_ins_num + pv_length_vec[i] < batch_size) {
+      offset->back().second += 1;
+      batch_ins_num += pv_length_vec[i];
     } else {
-        offset->push_back({i, 1});
-        batch_ins_num = pv_length_vec[i];
+      offset->push_back({i, 1});
+      batch_ins_num = pv_length_vec[i];
     }
   }
-  if (offset->size() % thread_num != 0){
+  if (offset->size() % thread_num != 0) {
     int total_instance_num = pv_length_vec.size();
     int need_batch_num = thread_num - offset->size() % thread_num + 1;
     int offset_split_index = static_cast<int>(offset->size() - 1);
-    int split_left_num = total_instance_num - offset->at(offset_split_index).first;
+    int split_left_num =
+        total_instance_num - offset->at(offset_split_index).first;
     while (split_left_num < need_batch_num) {
       need_batch_num += 1;
       offset_split_index -= 1;
-      split_left_num = total_instance_num - offset->at(offset_split_index).first;
+      split_left_num =
+          total_instance_num - offset->at(offset_split_index).first;
     }
     int split_start = offset->at(offset_split_index).first;
     offset->resize(offset_split_index);
@@ -2764,11 +2780,12 @@ void PadBoxSlotDataset::DestroyReaders() {
   readers_.shrink_to_fit();
 }
 
-static void compute_split_num_and_mask(const size_t ins_count,
-                                       const size_t seq_length,
-                                       const size_t train_length,
-                                       std::vector<std::pair<size_t, size_t>>& offset,
-                                       std::vector<int>& zero_mask) {
+static void compute_split_num_and_mask(
+    const size_t ins_count,
+    const size_t seq_length,
+    const size_t train_length,
+    std::vector<std::pair<size_t, size_t>>& offset,
+    std::vector<int>& zero_mask) {
   // [0, seq_length) contain one test-train windown
   size_t window_num = (ins_count - seq_length) / train_length + 1;
   // all ins train window
@@ -2855,7 +2872,7 @@ void PadBoxSlotDataset::PreprocessInstance() {
     size_t ins_count = 0;
     for (i = 0; i < all_records_num; i += ins_count) {
       std::string now_user_id = input_records_[i]->user_id_;
-      if(invalid_users_.find(now_user_id) != invalid_users_.end()) {
+      if (invalid_users_.find(now_user_id) != invalid_users_.end()) {
         SlotPvInstance pv_instance = make_slotpv_instance();
         input_pv_ins_.push_back(pv_instance);
         input_pv_ins_.back()->merge_instance(input_records_[i]);
@@ -2916,25 +2933,26 @@ void PadBoxSlotDataset::PreprocessInstance() {
       input_pv_ins_.push_back(pv_instance);
     }
   }
+  if (!is_test_ &&
+      train_timestamp_range_.second > train_timestamp_range_.first &&
+      train_timestamp_range_.first > 0) {
+    VLOG(1) << "train before filter pv_ins size: " << input_pv_ins_.size();
+    for (auto& pv : input_pv_ins_) {
+      if (pv->ads.back()->cur_timestamp_ < train_timestamp_range_.first) {
+        delete pv;
+        pv = NULL;
+      }
+    }
+    input_pv_ins_.erase(
+        std::remove_if(input_pv_ins_.begin(),
+                       input_pv_ins_.end(),
+                       [this](SlotPvInstance pv) { return pv == NULL; }),
+        input_pv_ins_.end());
+    VLOG(1) << "train after filter pv_ins size: " << input_pv_ins_.size();
+  }
 
   // erase non-test instance(nothing in range)
   if (merge_by_uid_ && is_test_) {
-    if (FLAGS_dump_pv_ins) {
-      static int index_before = 0;
-      std::string file_name =
-          "before_filter_pv_ins_" + std::to_string(index_before++) + ".txt";
-      std::ofstream ofs(file_name);
-      for (auto pv : input_pv_ins_) {
-        for (auto ins : pv->ads) {
-          ofs << ins->user_id_sign_ << ":" << ins->user_id_ << ":"
-              << ins->cur_timestamp_ << " ";
-        }
-        ofs << "\n";
-      }
-      ofs.close();
-    }
-    VLOG(0) << "test timestamp range: [" << test_timestamp_range_.first << ", "
-            << test_timestamp_range_.second << ")";
     size_t all_pv_ins_size = input_pv_ins_.size();
 
     for (auto& pv : input_pv_ins_) {
@@ -3103,7 +3121,7 @@ void PadBoxSlotDataset::PrepareTrain(void) {
 
     if(FLAGS_compute_batch_by_seq_length){
       int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
-                          ->GetBatchSize();
+              ->GetBatchSize();
       std::vector<int> pv_length_vec(input_pv_ins_.size());
       for(size_t i = 0; i < input_pv_ins_.size(); ++i){
         pv_length_vec[i] = input_pv_ins_[i]->ads.size();
@@ -3112,7 +3130,7 @@ void PadBoxSlotDataset::PrepareTrain(void) {
           thread_num_, pv_length_vec, merge_by_uid_split_size_, batchsize, &offset);
     } else {
       int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
-                      ->GetPvBatchSize();
+              ->GetPvBatchSize();
       compute_paddlebox_thread_batch_nccl(
           thread_num_, GetPvDataSize(), batchsize, &offset);
     }

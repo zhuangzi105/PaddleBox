@@ -458,6 +458,7 @@ class InMemoryDataset(DatasetBase):
             self.merge_by_uid_split_size, self.merge_by_uid_split_train_size)
         self.dataset.set_invalid_users(self.invalid_users)
         self.dataset.set_need_time_info(self.need_time_info)
+        self.dataset.set_train_timestamp_range(self.train_timestamp_range)
         self.dataset.set_test_mode(self.test_mode)
         self.dataset.set_test_timestamp_range(self.test_timestamp_range)
         self.dataset.set_enable_pv_merge(self.enable_pv_merge)
@@ -643,6 +644,12 @@ class InMemoryDataset(DatasetBase):
         Set need_time_info
         """
         self.need_time_info = need_time_info
+    
+    def set_train_timestamp_range(self, train_timestamp_range):
+        """
+        Set train timestamp range
+        """
+        self.train_timestamp_range = train_timestamp_range
 
 
     def set_test_mode(self, test_mode):
@@ -1472,6 +1479,7 @@ class PadBoxSlotDataset(BoxPSDataset):
         self.test_mode = False
         self.invalid_users = {""}
         self.need_time_info = False
+        self.train_timestamp_range = (0, 0)
         self.test_timestamp_range = (0, 0)
         self.enable_pv_merge = False
         self.merge_by_lineid = False

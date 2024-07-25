@@ -101,6 +101,7 @@ class Dataset {
   virtual void SetTestMode(bool is_merge) = 0;
   virtual void SetInvalidUsers(std::unordered_set<std::string> invalid_users) = 0;
   virtual void SetNeedTimeInfo(bool need_time_info) = 0;
+  virtual void SetTrainTimestamp(std::pair<uint64_t, uint64_t> range) = 0;
   virtual void SetTestTimestampRange(std::pair<uint64_t, uint64_t> range) = 0;
   virtual void SetShuffleByUid(bool enable_shuffle_uid) = 0;
   // set merge by ins id
@@ -232,6 +233,7 @@ class DatasetImpl : public Dataset {
   virtual void SetTestMode(bool is_merge);
   virtual void SetInvalidUsers(std::unordered_set<std::string> invalid_users);
   virtual void SetNeedTimeInfo(bool need_time_info);
+  virtual void SetTrainTimestamp(std::pair<uint64_t, uint64_t> range);
   virtual void SetTestTimestampRange(std::pair<uint64_t, uint64_t> range);
   virtual void SetShuffleByUid(bool enable_shuffle_uid);
 
@@ -322,6 +324,7 @@ class DatasetImpl : public Dataset {
   virtual void PreLoadIntoDisk(const std::string& path, const int file_num) {}
   virtual void WaitLoadDiskDone(void) {}
   virtual void SetLoadArchiveFile(bool archive) {}
+
  protected:
   virtual int ReceiveFromClient(int msg_type,
                                 int client_id,
@@ -373,6 +376,7 @@ class DatasetImpl : public Dataset {
   bool is_test_ = false;
   std::unordered_set<std::string> invalid_users_;
   bool need_time_info_ = false;
+  std::pair<uint64_t, uint64_t> train_timestamp_range_{0, 0};
   std::pair<uint64_t, uint64_t> test_timestamp_range_;
   bool shuffle_by_uid_;
   bool parse_uid_;
@@ -510,7 +514,6 @@ class PadBoxSlotDataset : public DatasetImpl<SlotRecord> {
   virtual void PreLoadIntoDisk(const std::string& path, const int file_num);
   virtual void WaitLoadDiskDone(void);
   virtual void SetLoadArchiveFile(bool archive) { is_archive_file_ = archive; }
-
 
  protected:
   // shuffle data
