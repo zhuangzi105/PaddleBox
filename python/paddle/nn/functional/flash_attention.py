@@ -465,6 +465,7 @@ def scaled_dot_product_attention(
     attn_mask=None,
     dropout_p=0.0,
     is_causal=False,
+    return_softmax=False,
     training=True,
     name=None,
 ):
@@ -522,14 +523,15 @@ def scaled_dot_product_attention(
 
     if attn_mask is None:
         # downgraded to ordinary flash attention implementation
-        out, _ = flash_attention(query, key, value, dropout_p, is_causal)
-        return out
+        out, softmax = flash_attention(query, key, value, dropout_p, is_causal)
+        #return out
+        return out, softmax if return_softmax else None
     else:
         if in_dynamic_mode():
             fixed_seed_offset = (None,)
-            return_softmax = False
+            #return_softmax = False
             rng_name = ""
-            out, _, _, _ = _C_ops.flash_attn(
+            out, softmax, _, _ = _C_ops.flash_attn(
                 query,
                 key,
                 value,
@@ -548,7 +550,7 @@ def scaled_dot_product_attention(
                 "rng_name",
                 rng_name,
             )
-            return out
+            return out, softmax if return_softmax else None
         else:
             helper = LayerHelper('flash_attn', **locals())
             dtype = helper.input_dtype(input_param_name='q')
@@ -579,9 +581,9 @@ def scaled_dot_product_attention(
                 attrs={
                     'dropout': dropout_p,
                     'causal': is_causal,
-                    'return_softmax': False,
+                    'return_softmax': return_softmax,
                     'is_test': not training,
                     'rng_name': '',
                 },
             )
-            return out
+            return out, softmax if return_softmax else None

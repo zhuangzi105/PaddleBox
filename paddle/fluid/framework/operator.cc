@@ -1774,6 +1774,10 @@ void OperatorWithKernel::RunImpl(const Scope& scope,
       for (auto& iname : InputVars()) {
         auto* var = exec_scope.FindVar(iname);
         if (var == nullptr) continue;
+        if (!(var->IsInitialized())) {
+          //printf("input name:%s is not initiallized\n", iname.c_str());
+          continue;
+        }
         std::ostringstream os;
         os << "input name:" << iname << ", ";
         if (var->IsType<framework::LoDTensor>()) {
@@ -1787,6 +1791,10 @@ void OperatorWithKernel::RunImpl(const Scope& scope,
       for (auto& iname : OutputVars(true)) {
         auto* var = exec_scope.FindVar(iname);
         if (var == nullptr) continue;
+        if (!(var->IsInitialized())) {
+          //printf("output name:%s is not initiallized\n", iname.c_str());
+          continue;
+        }
         std::ostringstream os;
         os << "output name:" << iname << ", ";
         if (var->IsType<framework::LoDTensor>()) {
