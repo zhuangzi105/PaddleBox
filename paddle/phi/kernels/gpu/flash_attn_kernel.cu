@@ -196,6 +196,20 @@ void FlashAttnKernel(const Context& ctx,
 
   cudaStream_t stream = ctx.stream();
 
+  DenseTensor * output_to_be_inited[4] = {out, softmax, softmax_lse, seed_offset};
+  for (int i = 0; i < 4; ++i) {
+    auto tensor_ptr = output_to_be_inited[i];
+    if (tensor_ptr != nullptr && tensor_ptr->initialized()) {
+      auto tmp_p = tensor_ptr->data();
+      size_t tmp_size = tensor_ptr->capacity();
+      if (tmp_p != nullptr && tmp_size > 0) {
+        VLOG(10) << "[FlashAttn Forward] reset output[" << i << "] mem";
+        cudaMemsetAsync(tmp_p, 0, tmp_size, stream);
+      }
+    }
+  }
+  VLOG(10) << "[FlashAttn Forward] call phi::dynload::flash_attn_fwd";
+
   bool succ = phi::dynload::flash_attn_fwd(
       q.data(),
       k.data(),
